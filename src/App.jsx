@@ -320,6 +320,7 @@ export default function App() {
   const [popup, setPopup] = useState(null);
   const [chipDurations, setChipDurations] = useState({});
   const [ptrDrag, setPtrDrag] = useState(null); // null | { mode, id?, studentId?, duration, hoverDay, hoverSlot, active, startX, startY, clickSession? }
+  const dragRef = useRef(null);
   const [calendarMode, setCalendarMode] = useState(() => {
     try { const d = JSON.parse(localStorage.getItem(STORAGE_KEY)); return d?.calendarMode || "tutor"; } catch {}
     return "tutor";
@@ -355,7 +356,56 @@ export default function App() {
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode })); } catch {}
-  }, [students, sessions, nextId, calendarMode, personalEvents, examDates]);
+  }, [students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode]);
+
+  // Global pointer handlers — fixes mobile drag (passive: false blocks scroll during drag)
+  useEffect(() => {
+    if (!ptrDrag) return;
+    const onMove = (e) => {
+      e.preventDefault();
+      const d = dragRef.current;
+      if (!d) return;
+      if (!d.active) {
+        const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
+        if (dx * dx + dy * dy < 25) return;
+        dragRef.current = { ...d, active: true };
+        setPtrDrag({ ...dragRef.current });
+        return;
+      }
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const day = el?.dataset?.day, slot = el?.dataset?.slot;
+      if (day != null && slot != null) {
+        const hDay = +day, hSlot = +slot;
+        if (d.hoverDay !== hDay || d.hoverSlot !== hSlot) {
+          dragRef.current = { ...dragRef.current, hoverDay: hDay, hoverSlot: hSlot };
+          setPtrDrag({ ...dragRef.current });
+        }
+      }
+    };
+    const onUp = () => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (!d.active) {
+        if (d.clickSession) setPopup({ type: "session", session: d.clickSession });
+      } else if (d.hoverDay != null && d.hoverSlot != null && d.hoverSlot + d.duration * 2 <= TOTAL_SLOTS) {
+        if (d.mode === "new") {
+          setSessions(prev => [...prev, { id: Date.now(), studentId: d.studentId, day: d.hoverDay, startSlot: d.hoverSlot, duration: d.duration, recurring: true }]);
+        } else {
+          setSessions(prev => prev.map(s => s.id === d.id ? { ...s, day: d.hoverDay, startSlot: d.hoverSlot } : s));
+        }
+      }
+      dragRef.current = null;
+      setPtrDrag(null);
+    };
+    document.addEventListener('pointermove', onMove, { passive: false });
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
+    return () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+    };
+  }, [!!ptrDrag]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getColor = (id) => {
     const stu = students.find(s => s.id === id);
@@ -621,7 +671,9 @@ export default function App() {
                     style={{ background: c.bg, borderColor: done ? c.border : "var(--border2)", touchAction: "none" }}
                     onPointerDown={e => {
                       e.preventDefault();
-                      setPtrDrag({ mode: "new", studentId: s.id, duration: dur, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY });
+                      const drag = { mode: "new", studentId: s.id, duration: dur, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY };
+                      dragRef.current = drag;
+                      setPtrDrag(drag);
                     }}
                   >
                     {payStatus && <span title={payStatus === "overdue" ? "Нужно оплатить" : payStatus === "soon" ? "Осталось последнее занятие" : "Оплачено"} style={{ width: 7, height: 7, borderRadius: "50%", background: sc.dot, display: "inline-block", flexShrink: 0, boxShadow: "0 0 0 2px white" }} />}
@@ -673,46 +725,11 @@ export default function App() {
           <div className="hint-bar">
             <span>☝</span>
             <span>{ptrDrag?.active ? "Отпусти, чтобы поставить занятие" : "Зажми блок и перетащи · Перетащи ученика из чипов сверху"}</span>
-            {ptrDrag?.active && <button onClick={() => setPtrDrag(null)} style={{ marginLeft: "auto", background: "none", border: "1px solid #93c5fd", color: "#2563eb", borderRadius: 5, padding: "2px 10px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Отмена</button>}
+            {ptrDrag?.active && <button onClick={() => { dragRef.current = null; setPtrDrag(null); }} style={{ marginLeft: "auto", background: "none", border: "1px solid #93c5fd", color: "#2563eb", borderRadius: 5, padding: "2px 10px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Отмена</button>}
           </div>
 
           {/* Calendar grid */}
-          <div style={{ flex: 1, overflow: "auto", background: "var(--surface2)" }}
-            onPointerMove={e => {
-              if (!ptrDrag) return;
-              if (!ptrDrag.active) {
-                const dx = e.clientX - ptrDrag.startX;
-                const dy = e.clientY - ptrDrag.startY;
-                if (dx * dx + dy * dy < 25) return; // threshold 5px
-                setPtrDrag(d => ({ ...d, active: true }));
-              }
-              const el = document.elementFromPoint(e.clientX, e.clientY);
-              if (el?.dataset?.day != null && el?.dataset?.slot != null) {
-                setPtrDrag(d => ({ ...d, hoverDay: +el.dataset.day, hoverSlot: +el.dataset.slot }));
-              }
-            }}
-            onPointerUp={() => {
-              if (!ptrDrag) return;
-              if (!ptrDrag.active) {
-                // Was a click, not a drag
-                if (ptrDrag.clickSession) {
-                  setPopup({ type: "session", session: ptrDrag.clickSession });
-                }
-                setPtrDrag(null);
-                return;
-              }
-              if (ptrDrag.hoverDay != null && ptrDrag.hoverSlot != null) {
-                const dur = ptrDrag.duration;
-                if (ptrDrag.hoverSlot + dur * 2 <= TOTAL_SLOTS) {
-                  if (ptrDrag.mode === "new") {
-                    setSessions(prev => [...prev, { id: Date.now(), studentId: ptrDrag.studentId, day: ptrDrag.hoverDay, startSlot: ptrDrag.hoverSlot, duration: dur, recurring: true }]);
-                  } else {
-                    setSessions(prev => prev.map(s => s.id === ptrDrag.id ? { ...s, day: ptrDrag.hoverDay, startSlot: ptrDrag.hoverSlot } : s));
-                  }
-                }
-              }
-              setPtrDrag(null);
-            }}
+          <div style={{ flex: 1, overflow: ptrDrag ? "hidden" : "auto", background: "var(--surface2)", touchAction: ptrDrag ? "none" : "auto" }}
           >
             <div style={{ display: "flex", minWidth: 500 }}>
               {/* Time labels */}
@@ -788,7 +805,7 @@ export default function App() {
                           elements.push(
                             <div key={s.id} className="session-block"
                               style={{ top: s.startSlot * SLOT_HEIGHT + 1, left: "1%", width: "98%", height: height - 2, background: c.bg, borderLeftColor: c.accent, zIndex: 3, cursor: "grab", opacity: isMoving ? 0.3 : 1, touchAction: "none", userSelect: "none", pointerEvents: ptrDrag?.active ? "none" : "auto" }}
-                              onPointerDown={e => { e.preventDefault(); setPtrDrag({ mode: "move", id: s.id, studentId: s.studentId, duration: s.duration, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY, clickSession: s }); }}
+                              onPointerDown={e => { e.preventDefault(); const drag = { mode: "move", id: s.id, studentId: s.studentId, duration: s.duration, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY, clickSession: s }; dragRef.current = drag; setPtrDrag(drag); }}
                             >
                               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.accent, flexShrink: 0, display: "inline-block" }} />
@@ -827,7 +844,7 @@ export default function App() {
                                 return (
                                   <div key={s.id} className="session-block"
                                     style={{ position: "absolute", top: laneTop, left: `${i * laneW + 0.4}%`, width: `${laneW - 0.8}%`, height: laneHeight - 1, background: c.bg, borderLeft: `3px solid ${c.accent}`, borderRight: i < group.length - 1 ? `1px solid ${c.border}55` : "none", borderRadius: i === 0 ? "0 0 0 4px" : i === group.length-1 ? "0 0 4px 0" : "0", cursor: "grab", padding: "3px 5px", overflow: "hidden", opacity: isMoving ? 0.3 : 1, pointerEvents: ptrDrag?.active ? "none" : "auto", touchAction: "none", userSelect: "none" }}
-                                    onPointerDown={e => { e.preventDefault(); e.stopPropagation(); setPtrDrag({ mode: "move", id: s.id, studentId: s.studentId, duration: s.duration, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY, clickSession: s }); }}
+                                    onPointerDown={e => { e.preventDefault(); e.stopPropagation(); const drag = { mode: "move", id: s.id, studentId: s.studentId, duration: s.duration, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY, clickSession: s }; dragRef.current = drag; setPtrDrag(drag); }}
                                   >
                                     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                       <span style={{ width: 5, height: 5, borderRadius: "50%", background: c.accent, flexShrink: 0, display: "inline-block" }} />
@@ -979,6 +996,51 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("");
   const [ptrDrag, setPtrDrag] = useState(null); // { id, duration, hoverDay, hoverSlot }
+  const dragRef = useRef(null);
+
+  useEffect(() => {
+    if (!ptrDrag) return;
+    const onMove = (e) => {
+      e.preventDefault();
+      const d = dragRef.current;
+      if (!d) return;
+      if (!d.active) {
+        const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
+        if (dx * dx + dy * dy < 25) return;
+        dragRef.current = { ...d, active: true };
+        setPtrDrag({ ...dragRef.current });
+        return;
+      }
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const pday = el?.dataset?.pday, pslot = el?.dataset?.pslot;
+      if (pday != null && pslot != null) {
+        const hDay = +pday, hSlot = +pslot;
+        if (d.hoverDay !== hDay || d.hoverSlot !== hSlot) {
+          dragRef.current = { ...dragRef.current, hoverDay: hDay, hoverSlot: hSlot };
+          setPtrDrag({ ...dragRef.current });
+        }
+      }
+    };
+    const onUp = () => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (!d.active) {
+        if (d.clickEvent) openEdit(d.clickEvent);
+      } else if (d.hoverDay != null && d.hoverSlot != null && d.hoverSlot + d.duration * 2 <= TOTAL_SLOTS) {
+        onUpdate(d.id, { day: d.hoverDay, startSlot: d.hoverSlot });
+      }
+      dragRef.current = null;
+      setPtrDrag(null);
+    };
+    document.addEventListener('pointermove', onMove, { passive: false });
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
+    return () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+    };
+  }, [!!ptrDrag]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openNew = (day, slot) => {
     setTitle(""); setDuration(1); setColorIdx(0);
@@ -1017,37 +1079,10 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
       <div className="hint-bar">
         <span>☝</span>
         <span>{ptrDrag?.active ? "Отпусти, чтобы переместить" : "Зажми блок и перетащи · Кликни на пустое место — добавить"}</span>
-        {ptrDrag?.active && <button onClick={() => setPtrDrag(null)} style={{ marginLeft: "auto", background: "none", border: "1px solid #93c5fd", color: "#2563eb", borderRadius: 5, padding: "2px 10px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Отмена</button>}
+        {ptrDrag?.active && <button onClick={() => { dragRef.current = null; setPtrDrag(null); }} style={{ marginLeft: "auto", background: "none", border: "1px solid #93c5fd", color: "#2563eb", borderRadius: 5, padding: "2px 10px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Отмена</button>}
       </div>
 
-      <div style={{ flex: 1, overflow: "auto", background: "var(--surface2)" }}
-        onPointerMove={e => {
-          if (!ptrDrag) return;
-          if (!ptrDrag.active) {
-            const dx = e.clientX - ptrDrag.startX;
-            const dy = e.clientY - ptrDrag.startY;
-            if (dx * dx + dy * dy < 25) return;
-            setPtrDrag(d => ({ ...d, active: true }));
-          }
-          const el = document.elementFromPoint(e.clientX, e.clientY);
-          if (el?.dataset?.pday != null && el?.dataset?.pslot != null) {
-            setPtrDrag(d => ({ ...d, hoverDay: +el.dataset.pday, hoverSlot: +el.dataset.pslot }));
-          }
-        }}
-        onPointerUp={() => {
-          if (!ptrDrag) return;
-          if (!ptrDrag.active) {
-            if (ptrDrag.clickEvent) openEdit(ptrDrag.clickEvent);
-            setPtrDrag(null);
-            return;
-          }
-          if (ptrDrag.hoverDay != null && ptrDrag.hoverSlot != null) {
-            if (ptrDrag.hoverSlot + ptrDrag.duration * 2 <= TOTAL_SLOTS) {
-              onUpdate(ptrDrag.id, { day: ptrDrag.hoverDay, startSlot: ptrDrag.hoverSlot });
-            }
-          }
-          setPtrDrag(null);
-        }}
+      <div style={{ flex: 1, overflow: ptrDrag ? "hidden" : "auto", background: "var(--surface2)", touchAction: ptrDrag ? "none" : "auto" }}
       >
         <div style={{ display: "flex", minWidth: 500 }}>
           <div style={{ width: 44, flexShrink: 0, borderRight: "1px solid var(--border)", paddingTop: 28, background: "var(--surface)" }}>
@@ -1099,7 +1134,7 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
                   return (
                     <div key={ev.id} className="session-block"
                       style={{ top: ev.startSlot * SLOT_HEIGHT + 1, left: `${ev.col * wPct + 0.5}%`, width: `${wPct - 1}%`, height: height - 2, background: c.bg, borderLeftColor: c.accent, zIndex: 2, cursor: "grab", opacity: isMoving ? 0.3 : 1, touchAction: "none", userSelect: "none", pointerEvents: ptrDrag?.active ? "none" : "auto" }}
-                      onPointerDown={e => { e.preventDefault(); setPtrDrag({ id: ev.id, duration: ev.duration, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY, clickEvent: ev }); }}
+                      onPointerDown={e => { e.preventDefault(); const drag = { id: ev.id, duration: ev.duration, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY, clickEvent: ev }; dragRef.current = drag; setPtrDrag(drag); }}
                     >
                       <div style={{ fontSize: 11, fontWeight: 700, color: c.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.3 }}>
                         {ev.recurring === false && "1× "}{ev.title}
