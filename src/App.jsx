@@ -138,29 +138,55 @@ function layoutSessions(daySessions) {
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #f0ede8; }
+
+  :root {
+    --bg: var(--bg);
+    --surface: var(--surface);
+    --surface2: var(--surface2);
+    --border: var(--border);
+    --border2: var(--border2);
+    --text: var(--text);
+    --text-mid: var(--text-mid);
+    --text-muted: var(--text-muted);
+    --text-dim: var(--text-dim);
+    --text-faint: var(--text-faint);
+  }
+  [data-theme="dark"] {
+    --bg: var(--text);
+    --surface: #292524;
+    --surface2: #211e1b;
+    --border: #44403c;
+    --border2: var(--text-mid);
+    --text: var(--surface);
+    --text-mid: #d6d0ca;
+    --text-muted: var(--text-dim);
+    --text-dim: var(--text-muted);
+    --text-faint: var(--text-mid);
+  }
+
+  body { background: var(--bg); }
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: #d1cdc7; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 
   .tab-btn {
-    background: none; border: none; color: #a8a29e;
+    background: none; border: none; color: var(--text-dim);
     font-family: 'Manrope', sans-serif; font-size: 13px; font-weight: 500;
     padding: 10px 18px; cursor: pointer;
     border-bottom: 2px solid transparent;
     transition: color 0.15s, border-color 0.15s;
   }
-  .tab-btn.active { color: #1c1917; border-bottom-color: #2563eb; }
-  .tab-btn:hover:not(.active) { color: #57534e; }
+  .tab-btn.active { color: var(--text); border-bottom-color: #2563eb; }
+  .tab-btn:hover:not(.active) { color: var(--text-mid); }
 
   .dur-pill {
-    background: none; border: 1px solid #e2ddd8; color: #a8a29e;
+    background: none; border: 1px solid var(--border2); color: var(--text-dim);
     border-radius: 4px; padding: 2px 8px;
     font-family: 'JetBrains Mono', monospace; font-size: 11px; cursor: pointer;
     transition: all 0.1s; white-space: nowrap; line-height: 1.6;
   }
   .dur-pill.sel { background: #eff6ff; border-color: #93c5fd; color: #2563eb; }
-  .dur-pill:hover:not(.sel) { border-color: #c4bfba; color: #78716c; }
+  .dur-pill:hover:not(.sel) { border-color: var(--text-faint); color: var(--text-muted); }
 
   .toggle-btn {
     width: 34px; height: 19px; border-radius: 10px;
@@ -175,11 +201,11 @@ const CSS = `
   }
   .toggle-btn.on { background: #16a34a; }
   .toggle-btn.on::after { left: 18px; }
-  .toggle-btn.off { background: #d1cdc8; }
+  .toggle-btn.off { background: var(--border2); }
   .toggle-btn.off::after { left: 3px; }
 
   .edit-inp {
-    background: white; border: 1px solid #e2ddd8; color: #1c1917;
+    background: var(--surface); border: 1px solid var(--border2); color: var(--text);
     border-radius: 5px; padding: 5px 8px; font-family: 'Manrope', sans-serif;
     font-size: 13px; outline: none; transition: border-color 0.15s;
   }
@@ -213,12 +239,12 @@ const CSS = `
   .session-block:hover { box-shadow: 0 2px 10px rgba(0,0,0,0.15); z-index: 5 !important; }
 
   .ghost-btn {
-    background: none; border: 1.5px dashed #d1cdc8; color: #a8a29e;
+    background: none; border: 1.5px dashed var(--border2); color: var(--text-dim);
     border-radius: 8px; padding: 11px; font-family: 'Manrope', sans-serif;
     font-size: 13px; cursor: pointer; width: 100%;
     transition: border-color 0.15s, color 0.15s;
   }
-  .ghost-btn:hover { border-color: #a8a29e; color: #57534e; }
+  .ghost-btn:hover { border-color: var(--text-dim); color: var(--text-mid); }
 
   .save-btn {
     background: #ecfdf5; border: 1px solid #6ee7b7; color: #065f46;
@@ -228,29 +254,30 @@ const CSS = `
   .save-btn:hover { background: #d1fae5; }
 
   .cancel-btn-sm {
-    background: none; border: 1px solid #e2ddd8; color: #a8a29e;
+    background: none; border: 1px solid var(--border2); color: var(--text-dim);
     border-radius: 6px; padding: 7px 12px; font-family: 'Manrope', sans-serif;
     font-size: 12px; cursor: pointer; transition: color 0.12s;
   }
-  .cancel-btn-sm:hover { color: #57534e; }
+  .cancel-btn-sm:hover { color: var(--text-mid); }
 
   .iBtn {
-    background: none; border: none; color: #c4bfba; cursor: pointer;
+    background: none; border: none; color: var(--text-faint); cursor: pointer;
     padding: 4px 6px; border-radius: 5px;
     transition: color 0.12s, background 0.12s; font-size: 13px; line-height: 1;
   }
-  .iBtn:hover { color: #57534e; background: #f0ede8; }
+  .iBtn:hover { color: var(--text-mid); background: var(--bg); }
   .iBtn.del:hover { color: #dc2626; background: #fee2e2; }
 
   .overlay {
-    position: fixed; inset: 0; background: rgba(28,25,23,0.35);
+    position: fixed; inset: 0; background: rgba(28,25,23,0.4);
     display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px;
     backdrop-filter: blur(2px);
   }
+  [data-theme="dark"] .overlay { background: rgba(0,0,0,0.65); }
   .popup-card {
-    background: #faf9f7; border: 1px solid #e2ddd8;
+    background: var(--surface); border: 1px solid var(--border);
     border-radius: 12px; padding: 20px; width: 100%; max-width: 320px;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.12);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.2);
   }
   .del-btn {
     width: 100%; background: #fef2f2; border: 1px solid #fca5a5; color: #dc2626;
@@ -260,9 +287,9 @@ const CSS = `
   .del-btn:hover { background: #fee2e2; }
 
   .hint-bar {
-    font-family: 'Manrope', sans-serif; font-size: 11px; color: #c4bfba;
-    padding: 7px 16px; border-bottom: 1px solid #e8e4df;
-    background: #faf9f7;
+    font-family: 'Manrope', sans-serif; font-size: 11px; color: var(--text-faint);
+    padding: 7px 16px; border-bottom: 1px solid var(--border);
+    background: var(--surface);
     display: flex; align-items: center; gap: 6px;
   }
 
@@ -302,6 +329,10 @@ export default function App() {
     return { oge: "", ege: "" };
   });
   const [showSettings, setShowSettings] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    try { const d = JSON.parse(localStorage.getItem(STORAGE_KEY)); return d?.darkMode || false; } catch {}
+    return false;
+  });
   const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
   const [calendarZoom, setCalendarZoom] = useState("week"); // "day" | "week" | "month"
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
@@ -319,7 +350,7 @@ export default function App() {
   const goToday = () => { setWeekStart(getMonday(new Date())); setSelectedDayIdx(new Date().getDay() === 0 ? 6 : new Date().getDay() - 1); };
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ students, sessions, nextId, calendarMode, personalEvents, examDates })); } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode })); } catch {}
   }, [students, sessions, nextId, calendarMode, personalEvents, examDates]);
 
   const getColor = (id) => {
@@ -410,27 +441,30 @@ export default function App() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f0ede8", color: "#1c1917", fontFamily: "'Manrope', sans-serif" }}>
+    <div data-theme={darkMode ? "dark" : "light"} style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "'Manrope', sans-serif" }}>
       <style>{CSS}</style>
 
       {/* Header */}
-      <div style={{ background: "#faf9f7", borderBottom: "1px solid #e8e4df", padding: "14px 20px 0", display: "flex", flexDirection: "column" }}>
+      <div style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)", padding: "14px 20px 0", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.02em", color: "#1c1917" }}>Параллелка</span>
-          <span style={{ fontSize: 10, color: "#d1cdc8", letterSpacing: "0.06em", textTransform: "uppercase", fontFamily: "'JetBrains Mono', monospace" }}>{calendarMode === "tutor" ? "репетиторство" : "личное"}</span>
+          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--text)" }}>Параллелка</span>
+          <span style={{ fontSize: 10, color: "var(--text-faint)", letterSpacing: "0.06em", textTransform: "uppercase", fontFamily: "'JetBrains Mono', monospace" }}>{calendarMode === "tutor" ? "репетиторство" : "личное"}</span>
 
           {/* Mode switch */}
-          <div style={{ display: "flex", gap: 2, marginLeft: "auto", background: "#f0ede8", borderRadius: 8, padding: 2 }}>
-            <button onClick={() => setCalendarMode("tutor")} style={{ fontSize: 11, fontFamily: "'Manrope', sans-serif", fontWeight: 600, padding: "5px 11px", borderRadius: 6, border: "none", cursor: "pointer", background: calendarMode === "tutor" ? "white" : "transparent", color: calendarMode === "tutor" ? "#1c1917" : "#a8a29e", boxShadow: calendarMode === "tutor" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
+          <div style={{ display: "flex", gap: 2, marginLeft: "auto", background: "var(--bg)", borderRadius: 8, padding: 2 }}>
+            <button onClick={() => setCalendarMode("tutor")} style={{ fontSize: 11, fontFamily: "'Manrope', sans-serif", fontWeight: 600, padding: "5px 11px", borderRadius: 6, border: "none", cursor: "pointer", background: calendarMode === "tutor" ? "var(--surface)" : "transparent", color: calendarMode === "tutor" ? "var(--text)" : "var(--text-dim)", boxShadow: calendarMode === "tutor" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
               📚 Репетиторство
             </button>
-            <button onClick={() => setCalendarMode("personal")} style={{ fontSize: 11, fontFamily: "'Manrope', sans-serif", fontWeight: 600, padding: "5px 11px", borderRadius: 6, border: "none", cursor: "pointer", background: calendarMode === "personal" ? "white" : "transparent", color: calendarMode === "personal" ? "#1c1917" : "#a8a29e", boxShadow: calendarMode === "personal" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
+            <button onClick={() => setCalendarMode("personal")} style={{ fontSize: 11, fontFamily: "'Manrope', sans-serif", fontWeight: 600, padding: "5px 11px", borderRadius: 6, border: "none", cursor: "pointer", background: calendarMode === "personal" ? "var(--surface)" : "transparent", color: calendarMode === "personal" ? "var(--text)" : "var(--text-dim)", boxShadow: calendarMode === "personal" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
               🗓 Личное
             </button>
           </div>
 
-          <button onClick={() => setShowSettings(true)} title="Настройки: даты экзаменов" style={{ background: "none", border: "1px solid #e2ddd8", borderRadius: 6, width: 28, height: 28, cursor: "pointer", color: "#a8a29e", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <button onClick={() => setShowSettings(true)} title="Настройки: даты экзаменов" style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 28, height: 28, cursor: "pointer", color: "var(--text-dim)", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
             ⚙
+          </button>
+          <button onClick={() => setDarkMode(d => !d)} title={darkMode ? "Светлая тема" : "Тёмная тема"} style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 28, height: 28, cursor: "pointer", color: "var(--text-dim)", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {darkMode ? "☀" : "🌙"}
           </button>
         </div>
 
@@ -438,12 +472,12 @@ export default function App() {
         {(examDates.oge || examDates.ege) && (
           <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
             {examDates.oge && (() => { const n = daysUntil(examDates.oge); return (
-              <span style={{ fontSize: 11, color: n < 0 ? "#a8a29e" : "#78350f", background: n < 0 ? "#f0ede8" : "#fef3c7", border: `1px solid ${n < 0 ? "#e2ddd8" : "#fcd34d"}`, borderRadius: 6, padding: "3px 9px", fontFamily: "'JetBrains Mono', monospace" }}>
+              <span style={{ fontSize: 11, color: n < 0 ? "var(--text-dim)" : "#78350f", background: n < 0 ? "var(--bg)" : "#fef3c7", border: `1px solid ${n < 0 ? "var(--border2)" : "#fcd34d"}`, borderRadius: 6, padding: "3px 9px", fontFamily: "'JetBrains Mono', monospace" }}>
                 ОГЭ {formatDate(examDates.oge)} {n >= 0 ? `· через ${n} дн.` : "· прошёл"}
               </span>
             ); })()}
             {examDates.ege && (() => { const n = daysUntil(examDates.ege); return (
-              <span style={{ fontSize: 11, color: n < 0 ? "#a8a29e" : "#7f1d1d", background: n < 0 ? "#f0ede8" : "#fee2e2", border: `1px solid ${n < 0 ? "#e2ddd8" : "#fca5a5"}`, borderRadius: 6, padding: "3px 9px", fontFamily: "'JetBrains Mono', monospace" }}>
+              <span style={{ fontSize: 11, color: n < 0 ? "var(--text-dim)" : "#7f1d1d", background: n < 0 ? "var(--bg)" : "#fee2e2", border: `1px solid ${n < 0 ? "var(--border2)" : "#fca5a5"}`, borderRadius: 6, padding: "3px 9px", fontFamily: "'JetBrains Mono', monospace" }}>
                 ЕГЭ {formatDate(examDates.ege)} {n >= 0 ? `· через ${n} дн.` : "· прошёл"}
               </span>
             ); })()}
@@ -464,11 +498,11 @@ export default function App() {
           <div className="popup-card" onClick={e => e.stopPropagation()}>
             <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 14 }}>Настройки</div>
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Дата ОГЭ</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Дата ОГЭ</div>
               <input className="edit-inp" type="date" style={{ width: "100%" }} value={examDates.oge} onChange={e => setExamDate("oge", e.target.value)} />
             </div>
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Дата ЕГЭ</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Дата ЕГЭ</div>
               <input className="edit-inp" type="date" style={{ width: "100%" }} value={examDates.ege} onChange={e => setExamDate("ege", e.target.value)} />
             </div>
             <button className="save-btn" style={{ width: "100%" }} onClick={() => setShowSettings(false)}>Готово</button>
@@ -506,18 +540,18 @@ export default function App() {
 
       {/* Navigation + zoom */}
       {(calendarMode === "personal" || (calendarMode === "tutor" && tab === "schedule")) && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "8px 16px", background: "#faf9f7", borderBottom: "1px solid #e8e4df", flexWrap: "wrap" }}>
-          <button onClick={goPrevWeek} style={{ background: "none", border: "1px solid #e2ddd8", borderRadius: 6, width: 26, height: 26, cursor: "pointer", color: "#57534e", fontSize: 13 }}>‹</button>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "#1c1917", fontFamily: "'JetBrains Mono', monospace", minWidth: 130, textAlign: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "8px 16px", background: "var(--surface)", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
+          <button onClick={goPrevWeek} style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 26, height: 26, cursor: "pointer", color: "var(--text-mid)", fontSize: 13 }}>‹</button>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", fontFamily: "'JetBrains Mono', monospace", minWidth: 130, textAlign: "center" }}>
             {calendarZoom === "day" ? formatShortDate(addDays(weekStart, selectedDayIdx)) + `, ${DAYS[selectedDayIdx]}` :
              calendarZoom === "month" ? `${MONTHS_SHORT[weekStart.getMonth()]} ${weekStart.getFullYear()}` :
              `${formatShortDate(weekStart)} – ${formatShortDate(addDays(weekStart, 6))}`}
           </span>
-          <button onClick={goNextWeek} style={{ background: "none", border: "1px solid #e2ddd8", borderRadius: 6, width: 26, height: 26, cursor: "pointer", color: "#57534e", fontSize: 13 }}>›</button>
-          <button onClick={goToday} style={{ background: "none", border: "1px solid #e2ddd8", borderRadius: 6, padding: "4px 10px", cursor: "pointer", color: "#57534e", fontSize: 11, fontFamily: "'Manrope', sans-serif" }}>Сегодня</button>
-          <div style={{ display: "flex", gap: 2, background: "#f0ede8", borderRadius: 6, padding: 2, marginLeft: 8 }}>
+          <button onClick={goNextWeek} style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 26, height: 26, cursor: "pointer", color: "var(--text-mid)", fontSize: 13 }}>›</button>
+          <button onClick={goToday} style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, padding: "4px 10px", cursor: "pointer", color: "var(--text-mid)", fontSize: 11, fontFamily: "'Manrope', sans-serif" }}>Сегодня</button>
+          <div style={{ display: "flex", gap: 2, background: "var(--bg)", borderRadius: 6, padding: 2, marginLeft: 8 }}>
             {["day", "week", "month"].map(z => (
-              <button key={z} onClick={() => setCalendarZoom(z)} style={{ fontSize: 10, fontFamily: "'Manrope', sans-serif", fontWeight: 600, padding: "4px 9px", borderRadius: 4, border: "none", cursor: "pointer", background: calendarZoom === z ? "white" : "transparent", color: calendarZoom === z ? "#1c1917" : "#a8a29e", boxShadow: calendarZoom === z ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
+              <button key={z} onClick={() => setCalendarZoom(z)} style={{ fontSize: 10, fontFamily: "'Manrope', sans-serif", fontWeight: 600, padding: "4px 9px", borderRadius: 4, border: "none", cursor: "pointer", background: calendarZoom === z ? "var(--surface)" : "transparent", color: calendarZoom === z ? "var(--text)" : "var(--text-dim)", boxShadow: calendarZoom === z ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
                 {z === "day" ? "День" : z === "week" ? "Неделя" : "Месяц"}
               </button>
             ))}
@@ -528,7 +562,7 @@ export default function App() {
       {calendarMode === "tutor" && tab === "schedule" && calendarZoom === "month" && (
         <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
-            {DAYS.map(d => <div key={d} style={{ fontSize: 10, fontWeight: 600, color: "#a8a29e", textAlign: "center", padding: "4px 0" }}>{d}</div>)}
+            {DAYS.map(d => <div key={d} style={{ fontSize: 10, fontWeight: 600, color: "var(--text-dim)", textAlign: "center", padding: "4px 0" }}>{d}</div>)}
             {(() => {
               const first = new Date(weekStart.getFullYear(), weekStart.getMonth(), 1);
               const monthStart = getMonday(first);
@@ -541,9 +575,9 @@ export default function App() {
                 const pEvents = eventsVisibleInWeek(personalEvents, getMonday(d)).filter(e => e.day === dayIdx);
                 cells.push(
                   <div key={i} onClick={() => { setSelectedDayIdx(dayIdx); setWeekStart(getMonday(d)); setCalendarZoom("day"); }}
-                    style={{ minHeight: 60, background: inMonth ? "#faf9f7" : "#f0ede8", border: "1px solid #e8e4df", borderRadius: 6, padding: "4px 5px", cursor: "pointer", opacity: inMonth ? 1 : 0.5 }}
+                    style={{ minHeight: 60, background: inMonth ? "var(--surface)" : "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 5px", cursor: "pointer", opacity: inMonth ? 1 : 0.5 }}
                   >
-                    <div style={{ fontSize: 11, fontWeight: 600, color: "#57534e", marginBottom: 3 }}>{d.getDate()}</div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-mid)", marginBottom: 3 }}>{d.getDate()}</div>
                     {dayEvents.slice(0, 3).map(s => {
                       const st = students.find(x => x.id === s.studentId);
                       const c = getColor(s.studentId);
@@ -552,7 +586,7 @@ export default function App() {
                     {pEvents.slice(0, 2).map(e => (
                       <div key={e.id} style={{ fontSize: 8, color: PALETTE[e.colorIdx ?? 0].accent, background: PALETTE[e.colorIdx ?? 0].bg + "88", borderRadius: 3, padding: "1px 4px", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontStyle: "italic" }}>🗓 {e.title}</div>
                     ))}
-                    {dayEvents.length + pEvents.length > 5 && <div style={{ fontSize: 8, color: "#a8a29e" }}>+{dayEvents.length + pEvents.length - 5}</div>}
+                    {dayEvents.length + pEvents.length > 5 && <div style={{ fontSize: 8, color: "var(--text-dim)" }}>+{dayEvents.length + pEvents.length - 5}</div>}
                   </div>
                 );
               }
@@ -566,7 +600,7 @@ export default function App() {
         <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 126px)" }}>
 
           {/* Chips legend with drag hint */}
-          <div style={{ background: "#faf9f7", borderBottom: "1px solid #e8e4df", padding: "10px 14px", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", flexShrink: 0 }}>
+          <div style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)", padding: "10px 14px", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", flexShrink: 0 }}>
             {activeStudents.map(s => {
               const c = getColor(s.id);
               const placed = getPlaced(s.id);
@@ -574,13 +608,13 @@ export default function App() {
               const done = placed >= target;
               const dur = getChipDuration(s);
               const payStatus = getPaymentStatus(s);
-              const sc = STATUS_COLORS[payStatus] || { bg: "#f0ede8", border: "#e2ddd8", text: "#a8a29e", dot: "#c4bfba" };
+              const sc = STATUS_COLORS[payStatus] || { bg: "var(--bg)", border: "var(--border2)", text: "var(--text-dim)", dot: "var(--text-faint)" };
               const lessonsLeft = s.lessonsPaid ?? 0;
               return (
                 <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <div
                     className={`student-chip ${ptrDrag?.mode === "new" && ptrDrag?.studentId === s.id ? "dragging-active" : ""}`}
-                    style={{ background: c.bg, borderColor: done ? c.border : "#e2ddd8", touchAction: "none" }}
+                    style={{ background: c.bg, borderColor: done ? c.border : "var(--border2)", touchAction: "none" }}
                     onPointerDown={e => {
                       e.preventDefault();
                       setPtrDrag({ mode: "new", studentId: s.id, duration: dur, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY });
@@ -589,11 +623,11 @@ export default function App() {
                     {payStatus && <span title={payStatus === "overdue" ? "Нужно оплатить" : payStatus === "soon" ? "Осталось последнее занятие" : "Оплачено"} style={{ width: 7, height: 7, borderRadius: "50%", background: sc.dot, display: "inline-block", flexShrink: 0, boxShadow: "0 0 0 2px white" }} />}
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: c.accent, display: "inline-block", flexShrink: 0 }} />
                     <span style={{ fontSize: 12, fontWeight: 600, color: c.text, whiteSpace: "nowrap" }}>{s.name}</span>
-                    <span style={{ fontSize: 10, color: done ? c.accent : "#c4bfba", background: done ? c.light : "#f5f3f0", padding: "0 5px", borderRadius: 3, fontFamily: "'JetBrains Mono', monospace" }}>
+                    <span style={{ fontSize: 10, color: done ? c.accent : "var(--text-faint)", background: done ? c.light : "var(--surface2)", padding: "0 5px", borderRadius: 3, fontFamily: "'JetBrains Mono', monospace" }}>
                       {placed}/{target}
                     </span>
                     {s.paymentMode === "single" ? (
-                      <span title="Оплата разово за занятие" style={{ fontSize: 10, color: "#a8a29e", background: "#f0ede8", padding: "0 5px", borderRadius: 3, fontFamily: "'JetBrains Mono', monospace" }}>разово</span>
+                      <span title="Оплата разово за занятие" style={{ fontSize: 10, color: "var(--text-dim)", background: "var(--bg)", padding: "0 5px", borderRadius: 3, fontFamily: "'JetBrains Mono', monospace" }}>разово</span>
                     ) : (
                       <span title={`Осталось оплаченных занятий${s.lastPaymentDate ? ` · последняя оплата ${formatDate(s.lastPaymentDate)} (+${s.lastPaymentAmount})` : ""}${s.lastLessonDate ? ` · последнее занятие ${formatDate(s.lastLessonDate)}` : ""}`} style={{ fontSize: 10, color: sc.text, background: sc.bg, padding: "0 5px", borderRadius: 3, fontFamily: "'JetBrains Mono', monospace", border: `1px solid ${sc.border}` }}>
                         💰{lessonsLeft}
@@ -610,7 +644,7 @@ export default function App() {
                         markLessonDone(s.id, inputDate.trim() || today, inputNote ? inputNote.trim() : "");
                       }}
                       onMouseDown={e => e.stopPropagation()}
-                      style={{ background: "white", border: "1px solid #e2ddd8", color: "#57534e", borderRadius: 4, width: 18, height: 18, fontSize: 11, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontFamily: "inherit" }}
+                      style={{ background: "var(--surface)", border: "1px solid var(--border2)", color: "var(--text-mid)", borderRadius: 4, width: 18, height: 18, fontSize: 11, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontFamily: "inherit" }}
                     >✓</button>
                     {/* Duration pills inside chip */}
                     <div style={{ display: "flex", gap: 3, marginLeft: 2 }}>
@@ -625,8 +659,8 @@ export default function App() {
                 </div>
               );
             })}
-            {activeStudents.length === 0 && <span style={{ fontSize: 12, color: "#c4bfba" }}>Нет активных учеников</span>}
-            <button onClick={clearSchedule} style={{ marginLeft: "auto", background: "none", border: "1px solid #e2ddd8", color: "#c4bfba", borderRadius: 5, padding: "4px 10px", fontFamily: "inherit", fontSize: 11, cursor: "pointer" }}>
+            {activeStudents.length === 0 && <span style={{ fontSize: 12, color: "var(--text-faint)" }}>Нет активных учеников</span>}
+            <button onClick={clearSchedule} style={{ marginLeft: "auto", background: "none", border: "1px solid var(--border2)", color: "var(--text-faint)", borderRadius: 5, padding: "4px 10px", fontFamily: "inherit", fontSize: 11, cursor: "pointer" }}>
               Очистить
             </button>
           </div>
@@ -639,7 +673,7 @@ export default function App() {
           </div>
 
           {/* Calendar grid */}
-          <div style={{ flex: 1, overflow: "auto", background: "#f5f2ed" }}
+          <div style={{ flex: 1, overflow: "auto", background: "var(--surface2)" }}
             onPointerMove={e => {
               if (!ptrDrag) return;
               if (!ptrDrag.active) {
@@ -678,19 +712,19 @@ export default function App() {
           >
             <div style={{ display: "flex", minWidth: 500 }}>
               {/* Time labels */}
-              <div style={{ width: 44, flexShrink: 0, borderRight: "1px solid #e8e4df", paddingTop: 28, background: "#faf9f7" }}>
+              <div style={{ width: 44, flexShrink: 0, borderRight: "1px solid var(--border)", paddingTop: 28, background: "var(--surface)" }}>
                 {Array.from({ length: TOTAL_SLOTS }).map((_, i) => (
                   <div key={i} style={{ height: SLOT_HEIGHT, display: "flex", alignItems: "flex-start", justifyContent: "flex-end", paddingRight: 7, paddingTop: 2 }}>
-                    {i % 2 === 0 && <span style={{ fontSize: 9, color: "#c4bfba", fontFamily: "'JetBrains Mono', monospace", lineHeight: 1 }}>{slotToTime(i)}</span>}
+                    {i % 2 === 0 && <span style={{ fontSize: 9, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace", lineHeight: 1 }}>{slotToTime(i)}</span>}
                   </div>
                 ))}
               </div>
 
               {/* Day columns */}
               {visibleDays.map(dayIdx => { const dayLabel = DAYS[dayIdx]; return (
-                <div key={dayIdx} style={{ flex: 1, minWidth: 0, borderRight: "1px solid #ebe7e2" }}>
-                  <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "#a8a29e", borderBottom: "1px solid #e8e4df", background: "#faf9f7", position: "sticky", top: 0, zIndex: 2, letterSpacing: "0.05em" }}>
-                    {dayLabel} <span style={{ fontWeight: 400, color: "#c4bfba", fontSize: 10 }}>{addDays(weekStart, dayIdx).getDate()}</span>
+                <div key={dayIdx} style={{ flex: 1, minWidth: 0, borderRight: "1px solid var(--border)" }}>
+                  <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--text-dim)", borderBottom: "1px solid var(--border)", background: "var(--surface)", position: "sticky", top: 0, zIndex: 2, letterSpacing: "0.05em" }}>
+                    {dayLabel} <span style={{ fontWeight: 400, color: "var(--text-faint)", fontSize: 10 }}>{addDays(weekStart, dayIdx).getDate()}</span>
                   </div>
 
                   <div style={{ position: "relative", height: TOTAL_SLOTS * SLOT_HEIGHT }}>
@@ -706,7 +740,7 @@ export default function App() {
                           className="slot-cell"
                           style={{
                             top: slotIdx * SLOT_HEIGHT, height: SLOT_HEIGHT,
-                            borderBottom: `1px solid ${slotIdx % 2 === 1 ? "#ede9e4" : "#e8e4df"}`,
+                            borderBottom: `1px solid ${slotIdx % 2 === 1 ? "var(--border2)" : "var(--border)"}`,
                             background: isHover && hoverC ? hoverC.bg + "99" : undefined,
                           }}
                           onClick={() => { if (!ptrDrag) { /* future: click to add */ } }}
@@ -772,7 +806,7 @@ export default function App() {
                             <div key={`group-${group.map(s=>s.id).join("-")}`}
                               style={{ position: "absolute", top: groupStart * SLOT_HEIGHT, left: 0, right: 0, height: groupHeight, pointerEvents: "none", zIndex: 3 }}
                             >
-                              <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 18, background: "rgba(255,255,255,0.85)", borderTop: "2px solid #f59e0b", display: "flex", alignItems: "center", paddingLeft: 6, gap: 5, zIndex: 4, backdropFilter: "blur(2px)", pointerEvents: "none" }}>
+                              <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 18, background: "var(--surface)", borderTop: "2px solid #f59e0b", display: "flex", alignItems: "center", paddingLeft: 6, gap: 5, zIndex: 4, backdropFilter: "blur(2px)", pointerEvents: "none" }}>
                                 <span style={{ fontSize: 8, fontWeight: 700, color: "#b45309", letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'JetBrains Mono', monospace" }}>× {group.length}</span>
                                 <span style={{ fontSize: 8, color: "#92400e", fontFamily: "'Manrope', sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.map(s => { const st = students.find(x => x.id === s.studentId); return st?.name?.split(" ")[0] || "?"; }).join(" · ")}</span>
                                 <span style={{ fontSize: 8, color: "#d97706", fontFamily: "'JetBrains Mono', monospace", marginLeft: "auto", paddingRight: 6 }}>{totalRate.toLocaleString()} ₽/ч</span>
@@ -899,24 +933,24 @@ function SessionPopup({ sess, student, color, weekStart, onMarkDone, onUpdate, o
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: c.accent, display: "inline-block" }} />
           </div>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#1c1917" }}>{student.name}</div>
-            <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>{student.name}</div>
+            <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 1 }}>
               {DAYS[sess.day]}, {slotToTime(sess.startSlot)}–{slotToTime(sess.startSlot + sess.duration * 2)} · {sess.duration}ч
             </div>
           </div>
         </div>
-        <div style={{ fontSize: 12, color: "#78716c", marginBottom: 14, padding: "9px 11px", background: "#f5f2ed", borderRadius: 7, display: "flex", justifyContent: "space-between" }}>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14, padding: "9px 11px", background: "var(--surface2)", borderRadius: 7, display: "flex", justifyContent: "space-between" }}>
           <span>{student.subject}</span>
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 500 }}>{(student.rate * sess.duration).toLocaleString()} ₽</span>
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Точное время начала</div>
+          <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Точное время начала</div>
           <input className="edit-inp" type="time" style={{ width: 120 }} value={startTime} onChange={e => setStartTime(e.target.value)} />
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Повторение</div>
+          <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Повторение</div>
           <RecurrenceControl recurring={recurring} date={date} onChange={handleRecChange} />
         </div>
 
@@ -982,7 +1016,7 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
         {ptrDrag?.active && <button onClick={() => setPtrDrag(null)} style={{ marginLeft: "auto", background: "none", border: "1px solid #93c5fd", color: "#2563eb", borderRadius: 5, padding: "2px 10px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Отмена</button>}
       </div>
 
-      <div style={{ flex: 1, overflow: "auto", background: "#f5f2ed" }}
+      <div style={{ flex: 1, overflow: "auto", background: "var(--surface2)" }}
         onPointerMove={e => {
           if (!ptrDrag) return;
           if (!ptrDrag.active) {
@@ -1012,18 +1046,18 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
         }}
       >
         <div style={{ display: "flex", minWidth: 500 }}>
-          <div style={{ width: 44, flexShrink: 0, borderRight: "1px solid #e8e4df", paddingTop: 28, background: "#faf9f7" }}>
+          <div style={{ width: 44, flexShrink: 0, borderRight: "1px solid var(--border)", paddingTop: 28, background: "var(--surface)" }}>
             {Array.from({ length: TOTAL_SLOTS }).map((_, i) => (
               <div key={i} style={{ height: SLOT_HEIGHT, display: "flex", alignItems: "flex-start", justifyContent: "flex-end", paddingRight: 7, paddingTop: 2 }}>
-                {i % 2 === 0 && <span style={{ fontSize: 9, color: "#c4bfba", fontFamily: "'JetBrains Mono', monospace", lineHeight: 1 }}>{slotToTime(i)}</span>}
+                {i % 2 === 0 && <span style={{ fontSize: 9, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace", lineHeight: 1 }}>{slotToTime(i)}</span>}
               </div>
             ))}
           </div>
 
           {visibleDays.map(dayIdx => { const dayLabel = DAYS[dayIdx]; return (
-            <div key={dayIdx} style={{ flex: 1, minWidth: 0, borderRight: "1px solid #ebe7e2" }}>
-              <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "#a8a29e", borderBottom: "1px solid #e8e4df", background: "#faf9f7", position: "sticky", top: 0, zIndex: 2, letterSpacing: "0.05em" }}>
-                {dayLabel} <span style={{ fontWeight: 400, color: "#c4bfba", fontSize: 10 }}>{addDays(weekStart, dayIdx).getDate()}</span>
+            <div key={dayIdx} style={{ flex: 1, minWidth: 0, borderRight: "1px solid var(--border)" }}>
+              <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--text-dim)", borderBottom: "1px solid var(--border)", background: "var(--surface)", position: "sticky", top: 0, zIndex: 2, letterSpacing: "0.05em" }}>
+                {dayLabel} <span style={{ fontWeight: 400, color: "var(--text-faint)", fontSize: 10 }}>{addDays(weekStart, dayIdx).getDate()}</span>
               </div>
               <div style={{ position: "relative", height: TOTAL_SLOTS * SLOT_HEIGHT }}>
                 {Array.from({ length: TOTAL_SLOTS }).map((_, slotIdx) => {
@@ -1033,7 +1067,7 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
                       data-pday={dayIdx}
                       data-pslot={slotIdx}
                       className="slot-cell"
-                      style={{ top: slotIdx * SLOT_HEIGHT, height: SLOT_HEIGHT, borderBottom: `1px solid ${slotIdx % 2 === 1 ? "#ede9e4" : "#e8e4df"}`, background: isHover ? "rgba(37,99,235,0.08)" : undefined }}
+                      style={{ top: slotIdx * SLOT_HEIGHT, height: SLOT_HEIGHT, borderBottom: `1px solid ${slotIdx % 2 === 1 ? "var(--border2)" : "var(--border)"}`, background: isHover ? "rgba(37,99,235,0.08)" : undefined }}
                       onClick={() => { if (!ptrDrag) openNew(dayIdx, slotIdx); }}
                     />
                   );
@@ -1079,32 +1113,32 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
       {popup && (
         <div className="overlay" onClick={() => setPopup(null)}>
           <div className="popup-card" onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 11, color: "#a8a29e", marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 12 }}>
               {popup.type === "new" ? `${DAYS[popup.day]}, ${slotToTime(popup.slot)}` : `${DAYS[popup.event.day]}, ${slotToTime(popup.event.startSlot)}`}
             </div>
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Что это</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Что это</div>
               <input className="edit-inp" style={{ width: "100%" }} placeholder="Пара в вузе / Спортзал / ..." value={title} onChange={e => setTitle(e.target.value)} autoFocus onKeyDown={e => e.key === "Enter" && submit()} />
             </div>
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Точное время начала</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Точное время начала</div>
               <input className="edit-inp" type="time" style={{ width: 120 }} value={startTime} onChange={e => setStartTime(e.target.value)} />
             </div>
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Длительность</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Длительность</div>
               <div style={{ display: "flex", gap: 4 }}>
                 {DURATIONS.map(d => <button key={d} className={`dur-pill ${duration === d ? "sel" : ""}`} onClick={() => setDuration(d)}>{d}ч</button>)}
               </div>
             </div>
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Повторение</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Повторение</div>
               <RecurrenceControl recurring={recurring} date={date} onChange={handleRecChange} />
             </div>
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Цвет</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Цвет</div>
               <div style={{ display: "flex", gap: 6 }}>
                 {PALETTE.map((c, i) => (
-                  <button key={i} onClick={() => setColorIdx(i)} style={{ width: 22, height: 22, borderRadius: "50%", background: c.accent, border: colorIdx === i ? "2px solid #1c1917" : "2px solid transparent", cursor: "pointer", padding: 0 }} />
+                  <button key={i} onClick={() => setColorIdx(i)} style={{ width: 22, height: 22, borderRadius: "50%", background: c.accent, border: colorIdx === i ? "2px solid var(--text)" : "2px solid transparent", cursor: "pointer", padding: 0 }} />
                 ))}
               </div>
             </div>
@@ -1182,7 +1216,7 @@ function MarkDoneInput({ onMark, label }) {
           onChange={e => setNote(e.target.value)}
           onKeyDown={e => e.key === "Enter" && submit()}
         />
-        <button onClick={submit} style={{ fontSize: 11, fontWeight: 600, background: "white", border: "1px solid #e2ddd8", color: "#57534e", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
+        <button onClick={submit} style={{ fontSize: 11, fontWeight: 600, background: "var(--surface)", border: "1px solid var(--border2)", color: "var(--text-mid)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
           {label || "Занятие прошло −1"}
         </button>
       </div>
@@ -1198,7 +1232,7 @@ function NotesField({ value, onSave }) {
     return (
       <div
         onClick={() => { setText(value); setEditing(true); }}
-        style={{ fontSize: 12, color: value ? "#57534e" : "#c4bfba", background: "#f5f2ed", border: "1px solid #e8e4df", borderRadius: 7, padding: "6px 10px", cursor: "pointer", minHeight: 14, fontFamily: "'Manrope', sans-serif" }}
+        style={{ fontSize: 12, color: value ? "var(--text-mid)" : "var(--text-faint)", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 7, padding: "6px 10px", cursor: "pointer", minHeight: 14, fontFamily: "'Manrope', sans-serif" }}
       >
         {value || "+ заметка по ученику (что проходим, слабые темы...)"}
       </div>
@@ -1259,7 +1293,7 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
 
   const Field = ({ label, children }) => (
     <div>
-      <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>{label}</div>
       {children}
     </div>
   );
@@ -1272,7 +1306,7 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
         const target = getTarget(s);
         const isEdit = editId === s.id;
         return (
-          <div key={s.id} style={{ background: "#faf9f7", border: "1px solid #e8e4df", borderRadius: 10, padding: "13px 15px", marginBottom: 8, opacity: s.active ? 1 : 0.55, transition: "opacity 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div key={s.id} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "13px 15px", marginBottom: 8, opacity: s.active ? 1 : 0.55, transition: "opacity 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
             {isEdit ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1303,7 +1337,7 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                   <Field label="Цвет">
                     <div style={{ display: "flex", gap: 5 }}>
                       {PALETTE.map((c, i) => (
-                        <button key={i} onClick={() => setEf(f => ({ ...f, colorIdx: i }))} style={{ width: 20, height: 20, borderRadius: "50%", background: c.accent, border: ef.colorIdx === i ? "2px solid #1c1917" : "2px solid transparent", cursor: "pointer", padding: 0 }} />
+                        <button key={i} onClick={() => setEf(f => ({ ...f, colorIdx: i }))} style={{ width: 20, height: 20, borderRadius: "50%", background: c.accent, border: ef.colorIdx === i ? "2px solid var(--text)" : "2px solid transparent", cursor: "pointer", padding: 0 }} />
                       ))}
                     </div>
                   </Field>
@@ -1321,7 +1355,7 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 13, fontWeight: 600 }}>{s.name}</span>
-                    <span style={{ fontSize: 11, color: "#a8a29e" }}>{s.subject}</span>
+                    <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{s.subject}</span>
                     {s.parentContact && (
                       <button
                         onClick={() => {
@@ -1337,19 +1371,19 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                       </button>
                     )}
                   </div>
-                  <div style={{ fontSize: 11, color: "#c4bfba", marginTop: 3, display: "flex", gap: 8, flexWrap: "wrap", fontFamily: "'JetBrains Mono', monospace" }}>
+                  <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 3, display: "flex", gap: 8, flexWrap: "wrap", fontFamily: "'JetBrains Mono', monospace" }}>
                     <span>{s.weeklyHours}ч/нед</span>
-                    <span style={{ color: "#e2ddd8" }}>·</span>
+                    <span style={{ color: "var(--border2)" }}>·</span>
                     <span>по {s.sessionDuration}ч</span>
-                    <span style={{ color: "#e2ddd8" }}>·</span>
+                    <span style={{ color: "var(--border2)" }}>·</span>
                     <span>{target} зан.</span>
-                    <span style={{ color: placed >= target ? "#16a34a" : "#c4bfba" }}>✓ {placed}/{target}</span>
+                    <span style={{ color: placed >= target ? "#16a34a" : "var(--text-faint)" }}>✓ {placed}/{target}</span>
                   </div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#1c1917" }}>{s.rate.toLocaleString()} ₽</div>
-                  <div style={{ fontSize: 10, color: "#c4bfba" }}>в час</div>
-                  <div style={{ fontSize: 9, color: "#a8a29e", marginTop: 2, fontFamily: "'JetBrains Mono', monospace" }} title="Lifetime Value">LTV {getStudentLTV(s).toLocaleString()} ₽</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{s.rate.toLocaleString()} ₽</div>
+                  <div style={{ fontSize: 10, color: "var(--text-faint)" }}>в час</div>
+                  <div style={{ fontSize: 9, color: "var(--text-dim)", marginTop: 2, fontFamily: "'JetBrains Mono', monospace" }} title="Lifetime Value">LTV {getStudentLTV(s).toLocaleString()} ₽</div>
                 </div>
                 <button className="iBtn" onClick={() => startEdit(s)}>✎</button>
                 <button className="iBtn" title="В архив" onClick={() => archiveStudent(s.id)} style={{ fontSize: 11 }}>📦</button>
@@ -1366,18 +1400,18 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                   if (s.paymentMode === "single") {
                     return (
                       <>
-                        <span style={{ fontSize: 11, color: "#a8a29e", background: "#f0ede8", border: "1px solid #e2ddd8", borderRadius: 10, padding: "2px 9px" }}>
+                        <span style={{ fontSize: 11, color: "var(--text-dim)", background: "var(--bg)", border: "1px solid var(--border2)", borderRadius: 10, padding: "2px 9px" }}>
                           разовая оплата · {(s.rate * s.sessionDuration).toLocaleString()} ₽ за занятие
                         </span>
                         {s.lastLessonDate && (
-                          <span style={{ fontSize: 10, color: "#c4bfba", fontFamily: "'JetBrains Mono', monospace" }}>
+                          <span style={{ fontSize: 10, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace" }}>
                             посл. занятие {formatDate(s.lastLessonDate)}{s.lastLessonNote ? ` · «${s.lastLessonNote}»` : ""}
                           </span>
                         )}
                         <MarkDoneInput onMark={(date, note) => markLessonDone(s.id, date, note)} />
                         <button
                           onClick={() => setOpenHistoryId(openHistoryId === s.id ? null : s.id)}
-                          style={{ fontSize: 11, color: "#a8a29e", background: "none", border: "1px solid #e2ddd8", borderRadius: 8, padding: "5px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
+                          style={{ fontSize: 11, color: "var(--text-dim)", background: "none", border: "1px solid var(--border2)", borderRadius: 8, padding: "5px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
                         >
                           История {openHistoryId === s.id ? "▲" : "▼"} {s.history?.length ? `(${s.history.length})` : ""}
                         </button>
@@ -1394,12 +1428,12 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                         {n < 0 ? `должен ${-n} занятий` : n === 0 ? "занятий не оплачено" : `осталось занятий: ${n}`}
                       </span>
                       {s.lastPaymentDate && (
-                        <span style={{ fontSize: 10, color: "#c4bfba", fontFamily: "'JetBrains Mono', monospace" }}>
+                        <span style={{ fontSize: 10, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace" }}>
                           (внесли {s.lastPaymentAmount} {formatDate(s.lastPaymentDate)})
                         </span>
                       )}
                       {s.lastLessonDate && (
-                        <span style={{ fontSize: 10, color: "#c4bfba", fontFamily: "'JetBrains Mono', monospace" }}>
+                        <span style={{ fontSize: 10, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace" }}>
                           · посл. занятие {formatDate(s.lastLessonDate)}{s.lastLessonNote ? ` · «${s.lastLessonNote}»` : ""}
                         </span>
                       )}
@@ -1407,7 +1441,7 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                       <PayInput onAdd={(n, date) => addLessons(s.id, n, date)} defaultAmount={s.lessonsPerBundle} />
                       <button
                         onClick={() => setOpenHistoryId(openHistoryId === s.id ? null : s.id)}
-                        style={{ fontSize: 11, color: "#a8a29e", background: "none", border: "1px solid #e2ddd8", borderRadius: 8, padding: "5px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
+                        style={{ fontSize: 11, color: "var(--text-dim)", background: "none", border: "1px solid var(--border2)", borderRadius: 8, padding: "5px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
                       >
                         История {openHistoryId === s.id ? "▲" : "▼"} {s.history?.length ? `(${s.history.length})` : ""}
                       </button>
@@ -1420,17 +1454,17 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
               {openHistoryId === s.id && (
                 <div style={{ paddingLeft: 54, marginTop: 2 }}>
                   {(!s.history || s.history.length === 0) ? (
-                    <div style={{ fontSize: 11, color: "#c4bfba", padding: "6px 0" }}>Пока нет записей</div>
+                    <div style={{ fontSize: 11, color: "var(--text-faint)", padding: "6px 0" }}>Пока нет записей</div>
                   ) : (
-                    <div style={{ background: "#f5f2ed", borderRadius: 8, padding: "6px 10px", maxHeight: 180, overflowY: "auto" }}>
+                    <div style={{ background: "var(--surface2)", borderRadius: 8, padding: "6px 10px", maxHeight: 180, overflowY: "auto" }}>
                       {[...s.history].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id)).map(ev => (
-                        <div key={ev.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "5px 0", borderBottom: "1px solid #e8e4df" }}>
+                        <div key={ev.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
                           <span style={{ fontSize: 12, marginTop: 1 }}>{ev.type === "payment" ? "💰" : "✓"}</span>
-                          <span style={{ fontSize: 11, color: "#a8a29e", fontFamily: "'JetBrains Mono', monospace", width: 48, flexShrink: 0, marginTop: 1 }}>{formatDate(ev.date)}</span>
-                          <span style={{ fontSize: 12, color: "#57534e", flex: 1 }}>
+                          <span style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "'JetBrains Mono', monospace", width: 48, flexShrink: 0, marginTop: 1 }}>{formatDate(ev.date)}</span>
+                          <span style={{ fontSize: 12, color: "var(--text-mid)", flex: 1 }}>
                             {ev.type === "payment" ? `Оплата: +${ev.amount} занятий` : "Занятие прошло (−1)"}
                             {ev.type === "lesson" && ev.note && (
-                              <div style={{ fontSize: 11, color: "#78716c", marginTop: 2, fontStyle: "italic" }}>«{ev.note}»</div>
+                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }}>«{ev.note}»</div>
                             )}
                           </span>
                           <button onClick={() => deleteHistoryEvent(s.id, ev.id)} title="Удалить запись и откатить баланс" className="iBtn del" style={{ fontSize: 11 }}>✕</button>
@@ -1447,40 +1481,40 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
       })}
 
       {showAdd ? (
-        <div style={{ background: "#faf9f7", border: "1px solid #e8e4df", borderRadius: 10, padding: "15px", marginTop: 6, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "15px", marginTop: 6, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
             <div style={{ flex: 1, minWidth: 110 }}>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Имя</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Имя</div>
               <input className="edit-inp" style={{ width: "100%" }} placeholder="Иван П." value={af.name} onChange={e => setAf(f => ({ ...f, name: e.target.value }))} autoFocus onKeyDown={e => e.key === "Enter" && doAdd()} />
             </div>
             <div style={{ flex: 1, minWidth: 100 }}>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Предмет</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Предмет</div>
               <input className="edit-inp" style={{ width: "100%" }} placeholder="ЕГЭ химия" value={af.subject} onChange={e => setAf(f => ({ ...f, subject: e.target.value }))} />
             </div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}>
             <div>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Ставка ₽/ч</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Ставка ₽/ч</div>
               <input className="edit-inp" type="number" style={{ width: 90 }} value={af.rate} onChange={e => setAf(f => ({ ...f, rate: e.target.value }))} />
             </div>
             <div>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Часов/нед</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Часов/нед</div>
               <input className="edit-inp" type="number" step="0.5" style={{ width: 70 }} value={af.weeklyHours} onChange={e => setAf(f => ({ ...f, weeklyHours: e.target.value }))} />
             </div>
             <div>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Длина занятия</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Длина занятия</div>
               <div style={{ display: "flex", gap: 4 }}>
                 {DURATIONS.map(d => <button key={d} className={`dur-pill ${af.sessionDuration === d ? "sel" : ""}`} onClick={() => setAf(f => ({ ...f, sessionDuration: d }))}>{d}ч</button>)}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Оплачено занятий</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Оплачено занятий</div>
               <input className="edit-inp" type="number" style={{ width: 70 }} value={af.lessonsPaid} onChange={e => setAf(f => ({ ...f, lessonsPaid: e.target.value }))} />
             </div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}>
             <div>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Оплата</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Оплата</div>
               <div style={{ display: "flex", gap: 4 }}>
                 {Object.entries(PAYMENT_MODE_LABELS).map(([key, label]) => (
                   <button key={key} className={`dur-pill ${af.paymentMode === key ? "sel" : ""}`} onClick={() => setAf(f => ({ ...f, paymentMode: key }))}>{label}</button>
@@ -1489,19 +1523,19 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
             </div>
             {af.paymentMode === "subscription" && (
               <div>
-                <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Занятий в абонементе</div>
+                <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Занятий в абонементе</div>
                 <input className="edit-inp" type="number" style={{ width: 70 }} value={af.lessonsPerBundle} onChange={e => setAf(f => ({ ...f, lessonsPerBundle: e.target.value }))} />
               </div>
             )}
             <div>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Контакт родителя</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Контакт родителя</div>
               <input className="edit-inp" style={{ width: 160 }} placeholder="@username / +7..." value={af.parentContact} onChange={e => setAf(f => ({ ...f, parentContact: e.target.value }))} />
             </div>
             <div>
-              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Цвет</div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Цвет</div>
               <div style={{ display: "flex", gap: 5 }}>
                 {PALETTE.map((c, i) => (
-                  <button key={i} onClick={() => setAf(f => ({ ...f, colorIdx: i }))} style={{ width: 20, height: 20, borderRadius: "50%", background: c.accent, border: af.colorIdx === i ? "2px solid #1c1917" : "2px solid transparent", cursor: "pointer", padding: 0 }} />
+                  <button key={i} onClick={() => setAf(f => ({ ...f, colorIdx: i }))} style={{ width: 20, height: 20, borderRadius: "50%", background: c.accent, border: af.colorIdx === i ? "2px solid var(--text)" : "2px solid transparent", cursor: "pointer", padding: 0 }} />
                 ))}
               </div>
             </div>
@@ -1518,21 +1552,21 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
       {/* Archive section */}
       {students.filter(s => s.archived).length > 0 && (
         <div style={{ marginTop: 20 }}>
-          <div style={{ fontSize: 11, color: "#a8a29e", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 8 }}>📦 Архив ({students.filter(s => s.archived).length})</div>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 8 }}>📦 Архив ({students.filter(s => s.archived).length})</div>
           {students.filter(s => s.archived).map(s => {
             const c = getColor(s.id);
             const ltv = getStudentLTV(s);
             const lessonsDone = (s.history || []).filter(h => h.type === "lesson").length;
             return (
-              <div key={s.id} style={{ background: "#f5f2ed", border: "1px solid #e8e4df", borderRadius: 8, padding: "10px 14px", marginBottom: 6, opacity: 0.7, display: "flex", alignItems: "center", gap: 10 }}>
+              <div key={s.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 14px", marginBottom: 6, opacity: 0.7, display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: c.accent, flexShrink: 0 }} />
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{s.name} <span style={{ fontSize: 11, color: "#a8a29e", fontWeight: 400 }}>{s.subject}</span></div>
-                  <div style={{ fontSize: 11, color: "#c4bfba", fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{s.name} <span style={{ fontSize: 11, color: "var(--text-dim)", fontWeight: 400 }}>{s.subject}</span></div>
+                  <div style={{ fontSize: 11, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
                     {lessonsDone} занятий · LTV {ltv.toLocaleString()} ₽
                   </div>
                 </div>
-                <button onClick={() => unarchiveStudent(s.id)} style={{ fontSize: 11, background: "white", border: "1px solid #e2ddd8", color: "#57534e", borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
+                <button onClick={() => unarchiveStudent(s.id)} style={{ fontSize: 11, background: "var(--surface)", border: "1px solid var(--border2)", color: "var(--text-mid)", borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
                   Восстановить
                 </button>
                 <button className="iBtn del" onClick={() => deleteStudent(s.id)} title="Удалить навсегда">✕</button>
