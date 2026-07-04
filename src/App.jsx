@@ -1,4 +1,8 @@
 import { useState, useEffect, useRef } from "react";
+import { auth, db } from './firebase.js';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import AuthScreen from './AuthScreen.jsx';
 
 const STORAGE_KEY = "tutor-parallel-v7";
 const SLOT_HEIGHT = 30;
@@ -321,6 +325,9 @@ export default function App() {
   const [chipDurations, setChipDurations] = useState({});
   const [ptrDrag, setPtrDrag] = useState(null); // null | { mode, id?, studentId?, duration, hoverDay, hoverSlot, active, startX, startY, clickSession? }
   const dragRef = useRef(null);
+  const lastWrittenRef = useRef(null);
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [calendarMode, setCalendarMode] = useState(() => {
     try { const d = JSON.parse(localStorage.getItem(STORAGE_KEY)); return d?.calendarMode || "tutor"; } catch {}
     return "tutor";
@@ -357,6 +364,37 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode })); } catch {}
   }, [students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode]);
+
+  useEffect(() => {
+    return onAuthStateChanged(auth, u => { setUser(u); setAuthLoading(false); });
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const ref = doc(db, 'users', user.uid, 'data', 'main');
+    const unsub = onSnapshot(ref, snap => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      if (JSON.stringify(data) === lastWrittenRef.current) return;
+      if (data.students) setStudents(data.students);
+      if (data.sessions) setSessions(data.sessions);
+      if (data.nextId) setNextId(data.nextId);
+      if (data.personalEvents) setPersonalEvents(data.personalEvents);
+      if (data.examDates) setExamDates(data.examDates);
+    });
+    return unsub;
+  }, [user?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!user) return;
+    const data = { students, sessions, nextId, personalEvents, examDates };
+    const t = setTimeout(() => {
+      const serialized = JSON.stringify(data);
+      lastWrittenRef.current = serialized;
+      setDoc(doc(db, 'users', user.uid, 'data', 'main'), data).catch(console.error);
+    }, 800);
+    return () => clearTimeout(t);
+  }, [students, sessions, nextId, personalEvents, examDates, user?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Global pointer handlers — fixes mobile drag (passive: false blocks scroll during drag)
   useEffect(() => {
@@ -494,6 +532,14 @@ export default function App() {
     return Math.round((target - today) / 86400000);
   };
 
+  if (authLoading) return (
+    <div data-theme={darkMode ? "dark" : "light"} style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Manrope', sans-serif" }}>
+      <style>{CSS}</style>
+      <span style={{ color: "var(--text-dim)", fontSize: 13 }}>...</span>
+    </div>
+  );
+  if (!user) return <AuthScreen darkMode={darkMode} />;
+
   return (
     <div data-theme={darkMode ? "dark" : "light"} style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "'Manrope', sans-serif" }}>
       <style>{CSS}</style>
@@ -519,6 +565,9 @@ export default function App() {
           </button>
           <button onClick={() => setDarkMode(d => !d)} title={darkMode ? "Светлая тема" : "Тёмная тема"} style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 28, height: 28, cursor: "pointer", color: "var(--text-dim)", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
             {darkMode ? "☀" : "🌙"}
+          </button>
+          <button onClick={() => signOut(auth)} title="Выйти" style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 28, height: 28, cursor: "pointer", color: "var(--text-dim)", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            ↪
           </button>
         </div>
 
