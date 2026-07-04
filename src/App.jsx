@@ -140,28 +140,32 @@ const CSS = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg: var(--bg);
-    --surface: var(--surface);
-    --surface2: var(--surface2);
-    --border: var(--border);
-    --border2: var(--border2);
-    --text: var(--text);
-    --text-mid: var(--text-mid);
-    --text-muted: var(--text-muted);
-    --text-dim: var(--text-dim);
-    --text-faint: var(--text-faint);
+    --bg: #f0ede8;
+    --surface: #faf9f7;
+    --surface2: #f5f2ed;
+    --border: #e8e4df;
+    --border2: #e2ddd8;
+    --text: #1c1917;
+    --text-mid: #57534e;
+    --text-muted: #78716c;
+    --text-dim: #a8a29e;
+    --text-faint: #c4bfba;
+    --warn-bg: #fffaf0;
+    --warn-border: #fed7aa;
   }
   [data-theme="dark"] {
-    --bg: var(--text);
+    --bg: #1c1917;
     --surface: #292524;
     --surface2: #211e1b;
     --border: #44403c;
-    --border2: var(--text-mid);
-    --text: var(--surface);
-    --text-mid: #d6d0ca;
-    --text-muted: var(--text-dim);
-    --text-dim: var(--text-muted);
-    --text-faint: var(--text-mid);
+    --border2: #57534e;
+    --text: #faf9f7;
+    --text-mid: #e2ddd8;
+    --text-muted: #c4bfba;
+    --text-dim: #a8a29e;
+    --text-faint: #78716c;
+    --warn-bg: #241500;
+    --warn-border: #78350f;
   }
 
   body { background: var(--bg); }
@@ -519,7 +523,7 @@ export default function App() {
           .sort((a, b) => (a.status === "overdue" ? 0 : 1) - (b.status === "overdue" ? 0 : 1));
         if (!alerts.length) return null;
         return (
-          <div style={{ background: "#fffaf0", borderBottom: "1px solid #fed7aa", padding: "9px 16px", display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ background: "var(--warn-bg)", borderBottom: "1px solid var(--warn-border)", padding: "9px 16px", display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: 13 }}>💰</span>
             {alerts.map(({ s, status }) => {
               const sc = STATUS_COLORS[status];
