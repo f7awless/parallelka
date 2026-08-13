@@ -1,10 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { auth, db } from './firebase.js';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
-import AuthScreen from './AuthScreen.jsx';
 
-const STORAGE_KEY = "tutor-parallel-v7";
+const STORAGE_KEY = "parallelka-v1";
 const SLOT_HEIGHT = 30;
 const START_HOUR = 8;
 const END_HOUR = 22;
@@ -29,7 +25,13 @@ const DEFAULT_STUDENTS = [
 
 const PAYMENT_MODE_LABELS = { subscription: "Абонемент", single: "Разовая" };
 
-const LESSON_QUICK_ADD = [1, 2, 4, 8];
+function loadState() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (raw) return raw;
+  } catch {}
+  return {};
+}
 
 function formatDate(iso) {
   if (!iso) return "";
@@ -308,43 +310,20 @@ const CSS = `
 `;
 
 export default function App() {
-  const [students, setStudents] = useState(() => {
-    try { const d = JSON.parse(localStorage.getItem(STORAGE_KEY)); if (d?.students) return d.students; } catch {}
-    return DEFAULT_STUDENTS;
-  });
-  const [sessions, setSessions] = useState(() => {
-    try { const d = JSON.parse(localStorage.getItem(STORAGE_KEY)); if (d?.sessions) return d.sessions; } catch {}
-    return [];
-  });
-  const [nextId, setNextId] = useState(() => {
-    try { const d = JSON.parse(localStorage.getItem(STORAGE_KEY)); return d?.nextId || 3; } catch {}
-    return 3;
-  });
+  const initial = useRef(loadState());
+  const [students, setStudents] = useState(() => initial.current.students || DEFAULT_STUDENTS);
+  const [sessions, setSessions] = useState(() => initial.current.sessions || []);
+  const [nextId, setNextId] = useState(() => initial.current.nextId || 3);
   const [tab, setTab] = useState("schedule");
   const [popup, setPopup] = useState(null);
   const [chipDurations, setChipDurations] = useState({});
   const [ptrDrag, setPtrDrag] = useState(null); // null | { mode, id?, studentId?, duration, hoverDay, hoverSlot, active, startX, startY, clickSession? }
   const dragRef = useRef(null);
-  const lastWrittenRef = useRef(null);
-  const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [calendarMode, setCalendarMode] = useState(() => {
-    try { const d = JSON.parse(localStorage.getItem(STORAGE_KEY)); return d?.calendarMode || "tutor"; } catch {}
-    return "tutor";
-  });
-  const [personalEvents, setPersonalEvents] = useState(() => {
-    try { const d = JSON.parse(localStorage.getItem(STORAGE_KEY)); if (d?.personalEvents) return d.personalEvents; } catch {}
-    return [];
-  });
-  const [examDates, setExamDates] = useState(() => {
-    try { const d = JSON.parse(localStorage.getItem(STORAGE_KEY)); if (d?.examDates) return d.examDates; } catch {}
-    return { oge: "", ege: "" };
-  });
+  const [calendarMode, setCalendarMode] = useState(() => initial.current.calendarMode || "tutor");
+  const [personalEvents, setPersonalEvents] = useState(() => initial.current.personalEvents || []);
+  const [examDates, setExamDates] = useState(() => initial.current.examDates || { oge: "", ege: "" });
   const [showSettings, setShowSettings] = useState(false);
-  const [darkMode, setDarkMode] = useState(() => {
-    try { const d = JSON.parse(localStorage.getItem(STORAGE_KEY)); return d?.darkMode || false; } catch {}
-    return false;
-  });
+  const [darkMode, setDarkMode] = useState(() => initial.current.darkMode || false);
   const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
   const [calendarZoom, setCalendarZoom] = useState("week"); // "day" | "week" | "month"
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
@@ -364,37 +343,6 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode })); } catch {}
   }, [students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode]);
-
-  useEffect(() => {
-    return onAuthStateChanged(auth, u => { setUser(u); setAuthLoading(false); });
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-    const ref = doc(db, 'users', user.uid, 'data', 'main');
-    const unsub = onSnapshot(ref, snap => {
-      if (!snap.exists()) return;
-      const data = snap.data();
-      if (JSON.stringify(data) === lastWrittenRef.current) return;
-      if (data.students) setStudents(data.students);
-      if (data.sessions) setSessions(data.sessions);
-      if (data.nextId) setNextId(data.nextId);
-      if (data.personalEvents) setPersonalEvents(data.personalEvents);
-      if (data.examDates) setExamDates(data.examDates);
-    });
-    return unsub;
-  }, [user?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!user) return;
-    const data = { students, sessions, nextId, personalEvents, examDates };
-    const t = setTimeout(() => {
-      const serialized = JSON.stringify(data);
-      lastWrittenRef.current = serialized;
-      setDoc(doc(db, 'users', user.uid, 'data', 'main'), data).catch(console.error);
-    }, 800);
-    return () => clearTimeout(t);
-  }, [students, sessions, nextId, personalEvents, examDates, user?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Global pointer handlers — fixes mobile drag (passive: false blocks scroll during drag)
   useEffect(() => {
@@ -532,14 +480,6 @@ export default function App() {
     return Math.round((target - today) / 86400000);
   };
 
-  if (authLoading) return (
-    <div data-theme={darkMode ? "dark" : "light"} style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Manrope', sans-serif" }}>
-      <style>{CSS}</style>
-      <span style={{ color: "var(--text-dim)", fontSize: 13 }}>...</span>
-    </div>
-  );
-  if (!user) return <AuthScreen darkMode={darkMode} />;
-
   return (
     <div data-theme={darkMode ? "dark" : "light"} style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "'Manrope', sans-serif" }}>
       <style>{CSS}</style>
@@ -565,9 +505,6 @@ export default function App() {
           </button>
           <button onClick={() => setDarkMode(d => !d)} title={darkMode ? "Светлая тема" : "Тёмная тема"} style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 28, height: 28, cursor: "pointer", color: "var(--text-dim)", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
             {darkMode ? "☀" : "🌙"}
-          </button>
-          <button onClick={() => signOut(auth)} title="Выйти" style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 28, height: 28, cursor: "pointer", color: "var(--text-dim)", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            ↪
           </button>
         </div>
 
@@ -662,7 +599,7 @@ export default function App() {
         </div>
       )}
 
-      {calendarMode === "tutor" && tab === "schedule" && calendarZoom === "month" && (
+      {((calendarMode === "tutor" && tab === "schedule") || calendarMode === "personal") && calendarZoom === "month" && (
         <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
             {DAYS.map(d => <div key={d} style={{ fontSize: 10, fontWeight: 600, color: "var(--text-dim)", textAlign: "center", padding: "4px 0" }}>{d}</div>)}
@@ -813,7 +750,6 @@ export default function App() {
                             borderBottom: `1px solid ${slotIdx % 2 === 1 ? "var(--border2)" : "var(--border)"}`,
                             background: isHover && hoverC ? hoverC.bg + "99" : undefined,
                           }}
-                          onClick={() => { if (!ptrDrag) { /* future: click to add */ } }}
                         />
                       );
                     })}
@@ -948,7 +884,7 @@ export default function App() {
         />
       )}
 
-      {calendarMode === "personal" && (
+      {calendarMode === "personal" && calendarZoom !== "month" && (
         <PersonalCalendarTab
           events={personalEvents}
           dayLayouts={personalDayLayouts}
