@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { SignedIn, SignedOut, SignIn, UserButton } from "@clerk/clerk-react";
 
 const STORAGE_KEY = "parallelka-v1";
 const SLOT_HEIGHT = 30;
@@ -7,6 +8,17 @@ const END_HOUR = 22;
 const TOTAL_SLOTS = (END_HOUR - START_HOUR) * 2;
 const DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const DURATIONS = [1, 1.5, 2];
+
+const SMART_LISTS = [
+  { key: "inbox", label: "Входящие", icon: "📥" },
+  { key: "today", label: "Сегодня", icon: "☀️" },
+  { key: "upcoming", label: "Предстоящие", icon: "📅" },
+  { key: "anytime", label: "Когда угодно", icon: "📚" },
+  { key: "someday", label: "Когда-нибудь", icon: "🗄" },
+  { key: "completed", label: "Выполнено", icon: "✅" },
+];
+const PRIORITY_COLORS = { 1: "#2563eb", 2: "#d97706", 3: "#dc2626" };
+const PRIORITY_LABELS = { 0: "Без приоритета", 1: "Низкий", 2: "Средний", 3: "Высокий" };
 
 const PALETTE = [
   { bg: "#dbeafe", border: "#93c5fd", text: "#1e3a8a", accent: "#2563eb", light: "#eff6ff" },
@@ -57,7 +69,9 @@ function slotToTime(slot) {
   const mins = START_HOUR * 60 + slot * 30;
   const h = Math.floor(mins / 60);
   const m = Math.round(mins % 60);
-  return `${h}:${m.toString().padStart(2, "0")}`;
+  // Zero-pad the hour too — this feeds <input type="time"> values directly, which
+  // silently rejects "8:00" (needs "08:00") and renders blank.
+  return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
 }
 
 function timeToSlot(hhmm) {
@@ -76,6 +90,11 @@ function getMonday(date) {
   return d;
 }
 
+function isToday(date) {
+  const t = new Date();
+  return date.getFullYear() === t.getFullYear() && date.getMonth() === t.getMonth() && date.getDate() === t.getDate();
+}
+
 function addDays(date, n) {
   const d = new Date(date);
   d.setDate(d.getDate() + n);
@@ -91,6 +110,24 @@ function isoDate(date) {
 function weekdayFromIso(iso) {
   const day = new Date(iso + "T00:00:00").getDay();
   return day === 0 ? 6 : day - 1;
+}
+
+// Whole weeks between two ISO dates (min 0) — used to project LTV across a
+// student's real-world start/end dates, since lesson history before the tutor
+// started using this app was never logged.
+function weeksBetween(startIso, endIso) {
+  const start = new Date(startIso + "T00:00:00");
+  const end = new Date(endIso + "T00:00:00");
+  const days = Math.floor((end - start) / 86400000);
+  return Math.max(0, days / 7);
+}
+
+function openContact(raw) {
+  const c = raw.trim();
+  if (!c) return;
+  if (c.startsWith("@")) window.open(`https://t.me/${c.slice(1)}`, "_blank");
+  else if (c.startsWith("+") || /^\d/.test(c)) window.open(`tel:${c.replace(/\s/g, "")}`, "_blank");
+  else window.open(`https://t.me/${c}`, "_blank");
 }
 
 function formatShortDate(date) {
@@ -141,6 +178,91 @@ function layoutSessions(daySessions) {
   return result;
 }
 
+// Swipe left/right to step a day, like Google Calendar's day view on a phone.
+// Requires a mostly-horizontal, fairly quick flick so it doesn't fire while the
+// user is just scrolling the grid vertically or tapping a block.
+function useSwipeDay(enabled, onPrev, onNext) {
+  const startRef = useRef(null);
+  if (!enabled) return {};
+  return {
+    onTouchStart: (e) => {
+      const t = e.touches[0];
+      startRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
+    },
+    onTouchEnd: (e) => {
+      const start = startRef.current;
+      startRef.current = null;
+      if (!start) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - start.x, dy = t.clientY - start.y;
+      if (Date.now() - start.time < 600 && Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        if (dx < 0) onNext(); else onPrev();
+      }
+    },
+  };
+}
+
+// A popup that's a centered modal on desktop and slides up as an iOS-style bottom
+// sheet on phone widths (see the .sheet-* rules in CSS), with a drag handle to
+// dismiss by swiping down — the native pattern users already know from iPhone apps.
+function Sheet({ onClose, children, className }) {
+  const [dragY, setDragY] = useState(0);
+  const draggingRef = useRef(false);
+  const startYRef = useRef(0);
+  const dragYRef = useRef(0);
+  const handleRef = useRef(null);
+
+  // React attaches JSX onTouchMove as a passive listener, so preventDefault inside it
+  // is silently ignored (and logs a warning) — attach natively with passive:false so
+  // dragging the handle doesn't also scroll the page behind the sheet.
+  useEffect(() => {
+    const el = handleRef.current;
+    if (!el) return;
+    const onStart = (e) => {
+      draggingRef.current = true;
+      startYRef.current = e.touches[0].clientY;
+    };
+    const onMove = (e) => {
+      if (!draggingRef.current) return;
+      const dy = e.touches[0].clientY - startYRef.current;
+      if (dy > 0) {
+        e.preventDefault();
+        dragYRef.current = dy;
+        setDragY(dy);
+      }
+    };
+    const onEnd = () => {
+      draggingRef.current = false;
+      if (dragYRef.current > 80) onClose();
+      else setDragY(0);
+      dragYRef.current = 0;
+    };
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd);
+    el.addEventListener("touchcancel", onEnd);
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onEnd);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="overlay sheet-overlay" onClick={onClose}>
+      <div
+        className={`popup-card sheet-card ${className || ""}`}
+        onClick={e => e.stopPropagation()}
+        style={dragY ? { transform: `translateY(${dragY}px)`, transition: "none" } : undefined}
+      >
+        <div ref={handleRef} className="sheet-handle" style={{ touchAction: "none" }} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -158,6 +280,10 @@ const CSS = `
     --text-faint: #c4bfba;
     --warn-bg: #fffaf0;
     --warn-border: #fed7aa;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
   }
   [data-theme="dark"] {
     --bg: #1c1917;
@@ -224,27 +350,26 @@ const CSS = `
   .slot-cell {
     position: absolute; left: 0; right: 0;
     cursor: crosshair;
-    transition: background 0.08s;
+    transition: background-color 130ms ease;
   }
   .slot-cell:hover { background: rgba(37,99,235,0.04) !important; }
-  .slot-cell.drag-over { background: rgba(37,99,235,0.08) !important; }
 
   .student-chip {
     display: flex; align-items: center; gap: 6px;
     padding: 5px 10px 5px 8px;
     border-radius: 8px; border: 1.5px solid transparent;
-    cursor: grab; user-select: none;
-    transition: box-shadow 0.12s, transform 0.12s;
+    cursor: pointer; user-select: none;
+    -webkit-user-select: none; -webkit-touch-callout: none;
+    transition: box-shadow 0.12s, transform 0.12s, border-color 0.12s;
   }
   .student-chip:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); transform: translateY(-1px); }
-  .student-chip:active { cursor: grabbing; }
-  .student-chip.dragging-active { opacity: 0.45; }
 
   .session-block {
     position: absolute; border-radius: 4px; cursor: pointer;
     overflow: hidden; padding: 4px 6px;
     transition: box-shadow 0.12s;
     border-left: 3px solid transparent;
+    -webkit-user-select: none; -webkit-touch-callout: none;
   }
   .session-block:hover { box-shadow: 0 2px 10px rgba(0,0,0,0.15); z-index: 5 !important; }
 
@@ -289,6 +414,7 @@ const CSS = `
     border-radius: 12px; padding: 20px; width: 100%; max-width: 320px;
     box-shadow: 0 12px 40px rgba(0,0,0,0.2);
   }
+  .sheet-handle { display: none; }
   .del-btn {
     width: 100%; background: #fef2f2; border: 1px solid #fca5a5; color: #dc2626;
     border-radius: 7px; padding: 10px; font-family: 'Manrope', sans-serif;
@@ -307,26 +433,131 @@ const CSS = `
     0%, 100% { box-shadow: 0 0 0 2px #2563eb, 0 0 8px rgba(37,99,235,0.2); }
     50% { box-shadow: 0 0 0 3px #2563eb, 0 0 16px rgba(37,99,235,0.4); }
   }
+  @keyframes sheet-slide-up {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+
+  .history-modal { max-width: 420px; max-height: 82vh; display: flex; flex-direction: column; }
+  .history-list { overflow-y: auto; flex: 1; min-height: 0; }
+  .history-row {
+    display: flex; align-items: flex-start; gap: 8px; padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .history-row:last-child { border-bottom: none; }
+
+  .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+
+  @media (max-width: 430px) {
+    /* Header clusters become single non-wrapping rows that scroll horizontally
+       instead of stacking and eating vertical space on a short iPhone viewport. */
+    .app-header-top, .exam-badges, .nav-zoom-row {
+      flex-wrap: nowrap !important;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .app-header-top > *, .exam-badges > *, .nav-zoom-row > * { flex-shrink: 0; }
+    .mode-switch button { white-space: nowrap; }
+
+    .popup-card { max-width: 100%; padding: 18px; }
+    .student-chip { font-size: 11px; }
+    .student-chip .chip-name { max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Apple HIG minimum 44x44 tap target + 8px breathing room between targets, scoped
+       to the small icon/toggle/action controls (the compact calendar-grid pills like
+       dur-pill are left alone — shrinking those would break the grid layout itself). */
+    .iBtn { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+    .toggle-btn { width: 46px; height: 26px; }
+    .toggle-btn::after { width: 20px; height: 20px; }
+    .toggle-btn.on::after { left: 23px; }
+    .toggle-btn.off::after { left: 3px; }
+    .save-btn, .del-btn, .cancel-btn-sm, .ghost-btn { min-height: 44px; font-size: 14px; }
+    .tab-btn { min-height: 44px; display: inline-flex; align-items: center; }
+    .inline-form-row { gap: 8px !important; row-gap: 10px !important; }
+    .inline-form-field { font-size: 14px !important; padding: 10px 10px !important; min-height: 44px; }
+    .inline-form-btn { font-size: 14px !important; min-height: 44px; padding: 8px 14px !important; }
+    .notes-field { min-height: 44px !important; font-size: 14px !important; }
+    .popup-card .field-label { font-size: 14px !important; }
+    .popup-card .dur-pill { font-size: 14px !important; padding: 8px 13px !important; min-height: 44px; }
+    .popup-card input.edit-inp { font-size: 14px !important; padding: 9px 10px !important; }
+    .popup-card { font-size: 14px; }
+
+    /* Bottom sheet: popups slide up from the bottom edge instead of centering,
+       matching the native iOS action-sheet pattern, with a drag handle to dismiss. */
+    .sheet-overlay { align-items: flex-end; padding: 0; }
+    .sheet-card {
+      max-width: 100%; width: 100%; border-radius: 18px 18px 0 0;
+      padding: 10px 18px calc(18px + var(--safe-bottom));
+      max-height: 88vh; overflow-y: auto;
+      animation: sheet-slide-up 260ms cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .sheet-handle {
+      display: block; width: 36px; height: 4px; border-radius: 2px;
+      background: var(--border2); margin: 2px auto 14px; flex-shrink: 0;
+    }
+
+    .planner-root { flex-direction: column; height: auto !important; }
+    .planner-sidebar { width: 100% !important; max-height: 220px; border-right: none !important; border-bottom: 1px solid var(--border); }
+  }
+
+  .task-row:hover { background: var(--surface2); border-radius: 6px; }
 `;
 
 export default function App() {
+  return (
+    <>
+      <SignedOut>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 16 }}>
+          <SignIn
+            appearance={{
+              elements: {
+                header: { display: "none" },
+                footerAction: { display: "none" },
+                socialButtons: { display: "none" },
+                dividerRow: { display: "none" },
+              },
+            }}
+          />
+        </div>
+      </SignedOut>
+      <SignedIn>
+        <TutorApp />
+      </SignedIn>
+    </>
+  );
+}
+
+function TutorApp() {
   const initial = useRef(loadState());
   const [students, setStudents] = useState(() => initial.current.students || DEFAULT_STUDENTS);
   const [sessions, setSessions] = useState(() => initial.current.sessions || []);
   const [nextId, setNextId] = useState(() => initial.current.nextId || 3);
   const [tab, setTab] = useState("schedule");
   const [popup, setPopup] = useState(null);
+  const [newDraft, setNewDraft] = useState(null); // { studentId, duration, day, slot } — confirm-before-create for a dropped chip
   const [chipDurations, setChipDurations] = useState({});
-  const [ptrDrag, setPtrDrag] = useState(null); // null | { mode, id?, studentId?, duration, hoverDay, hoverSlot, active, startX, startY, clickSession? }
-  const dragRef = useRef(null);
-  const [calendarMode, setCalendarMode] = useState(() => initial.current.calendarMode || "tutor");
+  // appMode: "calendar" | "planner" — the outer switch. Inside calendar, calendarMode
+  // is a 3-way sub-choice: "general" (both calendars combined, view-only) or a filtered
+  // "tutor"/"personal" view — clicking an already-active filter returns to "general".
+  const [appMode, setAppMode] = useState(() => initial.current.appMode || "calendar");
+  const [calendarMode, setCalendarMode] = useState(() => initial.current.calendarMode || "general");
   const [personalEvents, setPersonalEvents] = useState(() => initial.current.personalEvents || []);
   const [examDates, setExamDates] = useState(() => initial.current.examDates || { oge: "", ege: "" });
   const [showSettings, setShowSettings] = useState(false);
   const [darkMode, setDarkMode] = useState(() => initial.current.darkMode || false);
+  const [tasks, setTasks] = useState(() => initial.current.tasks || []);
+  const [taskProjects, setTaskProjects] = useState(() => initial.current.taskProjects || [
+    { id: 1, name: "Ученики", color: "#d97706" },
+    { id: 2, name: "Личное", color: "#059669" },
+  ]);
+  const [nextTaskId, setNextTaskId] = useState(() => initial.current.nextTaskId || 1);
+  const [nextProjectId, setNextProjectId] = useState(() => initial.current.nextProjectId || 3);
   const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
-  const [calendarZoom, setCalendarZoom] = useState("week"); // "day" | "week" | "month"
-  const [selectedDayIdx, setSelectedDayIdx] = useState(0);
+  // On a phone-width viewport the 7-column week grid is unreadable, so start on Day —
+  // desktop/tablet still default to Week as before.
+  const [calendarZoom, setCalendarZoom] = useState(() => (typeof window !== "undefined" && window.innerWidth < 430 ? "day" : "week")); // "day" | "week" | "month"
+  const [selectedDayIdx, setSelectedDayIdx] = useState(() => { const d = new Date().getDay(); return d === 0 ? 6 : d - 1; });
 
   const goPrevWeek = () => {
     if (calendarZoom === "day") setSelectedDayIdx(d => d > 0 ? d - 1 : (setWeekStart(w => addDays(w, -7)), 6));
@@ -339,59 +570,35 @@ export default function App() {
     else setWeekStart(d => addDays(d, 7));
   };
   const goToday = () => { setWeekStart(getMonday(new Date())); setSelectedDayIdx(new Date().getDay() === 0 ? 6 : new Date().getDay() - 1); };
+  const swipeDayHandlers = useSwipeDay(calendarZoom === "day", goPrevWeek, goNextWeek);
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode })); } catch {}
-  }, [students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode]);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode,
+        appMode, tasks, taskProjects, nextTaskId, nextProjectId,
+      }));
+    } catch {}
+  }, [students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode, appMode, tasks, taskProjects, nextTaskId, nextProjectId]);
 
-  // Global pointer handlers — fixes mobile drag (passive: false blocks scroll during drag)
-  useEffect(() => {
-    if (!ptrDrag) return;
-    const onMove = (e) => {
-      e.preventDefault();
-      const d = dragRef.current;
-      if (!d) return;
-      if (!d.active) {
-        const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
-        if (dx * dx + dy * dy < 25) return;
-        dragRef.current = { ...d, active: true };
-        setPtrDrag({ ...dragRef.current });
-        return;
-      }
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const day = el?.dataset?.day, slot = el?.dataset?.slot;
-      if (day != null && slot != null) {
-        const hDay = +day, hSlot = +slot;
-        if (d.hoverDay !== hDay || d.hoverSlot !== hSlot) {
-          dragRef.current = { ...dragRef.current, hoverDay: hDay, hoverSlot: hSlot };
-          setPtrDrag({ ...dragRef.current });
-        }
-      }
-    };
-    const onUp = () => {
-      const d = dragRef.current;
-      if (!d) return;
-      if (!d.active) {
-        if (d.clickSession) setPopup({ type: "session", session: d.clickSession });
-      } else if (d.hoverDay != null && d.hoverSlot != null && d.hoverSlot + d.duration * 2 <= TOTAL_SLOTS) {
-        if (d.mode === "new") {
-          setSessions(prev => [...prev, { id: Date.now(), studentId: d.studentId, day: d.hoverDay, startSlot: d.hoverSlot, duration: d.duration, recurring: true }]);
-        } else {
-          setSessions(prev => prev.map(s => s.id === d.id ? { ...s, day: d.hoverDay, startSlot: d.hoverSlot } : s));
-        }
-      }
-      dragRef.current = null;
-      setPtrDrag(null);
-    };
-    document.addEventListener('pointermove', onMove, { passive: false });
-    document.addEventListener('pointerup', onUp);
-    document.addEventListener('pointercancel', onUp);
-    return () => {
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
-      document.removeEventListener('pointercancel', onUp);
-    };
-  }, [!!ptrDrag]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Task CRUD for the planner
+  const addTask = (data) => { setTasks(prev => [...prev, { id: nextTaskId, done: false, doneAt: null, dueDate: null, priority: 0, projectId: null, list: "inbox", notes: "", createdAt: isoDate(new Date()), ...data }]); setNextTaskId(n => n + 1); };
+  const updateTask = (id, ch) => setTasks(prev => prev.map(t => t.id === id ? { ...t, ...ch } : t));
+  const toggleTaskDone = (id) => setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done, doneAt: !t.done ? isoDate(new Date()) : null } : t));
+  const deleteTask = (id) => setTasks(prev => prev.filter(t => t.id !== id));
+  const addTaskProject = (name) => { const id = nextProjectId; setTaskProjects(prev => [...prev, { id, name, color: PALETTE[prev.length % PALETTE.length].accent }]); setNextProjectId(n => n + 1); return id; };
+  const deleteTaskProject = (id) => { setTaskProjects(prev => prev.filter(p => p.id !== id)); setTasks(prev => prev.map(t => t.projectId === id ? { ...t, projectId: null } : t)); };
+
+  // Tapping an empty grid cell opens the create-session sheet; defaults to the
+  // last student picked (or the first active one) so repeat entry is quick, but
+  // the sheet always shows a picker to confirm/change who it's actually for.
+  const [lastPickedStudentId, setLastPickedStudentId] = useState(null);
+  const openNewSessionAt = (day, slot) => {
+    const active = students.filter(s => s.active && !s.archived);
+    if (!active.length) return;
+    const pick = active.find(s => s.id === lastPickedStudentId) || active[0];
+    setNewDraft({ studentId: pick.id, duration: pick.sessionDuration || 1, day, slot });
+  };
 
   const getColor = (id) => {
     const stu = students.find(s => s.id === id);
@@ -415,11 +622,27 @@ export default function App() {
 
   const toggleActive = (id) => setStudents(prev => prev.map(s => s.id === id ? { ...s, active: !s.active } : s));
   const deleteStudent = (id) => { setStudents(prev => prev.filter(s => s.id !== id)); setSessions(prev => prev.filter(s => s.studentId !== id)); };
-  const archiveStudent = (id) => { setStudents(prev => prev.map(s => s.id === id ? { ...s, archived: true, active: false } : s)); setSessions(prev => prev.filter(s => s.studentId !== id)); };
+  const archiveStudent = (id) => {
+    const today = new Date().toISOString().slice(0, 10);
+    setStudents(prev => prev.map(s => s.id === id ? { ...s, archived: true, active: false, endDate: s.endDate || today } : s));
+    setSessions(prev => prev.filter(s => s.studentId !== id));
+  };
   const unarchiveStudent = (id) => { setStudents(prev => prev.map(s => s.id === id ? { ...s, archived: false } : s)); };
+  // LTV is a hybrid: an estimate (weekly hours × rate) only for the historical
+  // gap between the real-world start date and the first lesson actually logged
+  // in the app — that gap is the only period with no record at all — plus the
+  // exact sum of every logged lesson from then on, one at a time as they're
+  // marked done. Without a start date, it's just the logged-lesson sum.
   const getStudentLTV = (s) => {
-    const lessonsDone = (s.history || []).filter(h => h.type === "lesson").length;
-    return lessonsDone * s.rate * s.sessionDuration;
+    const loggedLessons = (s.history || []).filter(h => h.type === "lesson");
+    const loggedLTV = loggedLessons.length * s.rate * s.sessionDuration;
+    if (!s.startDate) return loggedLTV;
+
+    const earliestLogged = loggedLessons.reduce((min, h) => (!min || h.date < min ? h.date : min), null);
+    const gapEnd = earliestLogged || s.endDate || isoDate(new Date());
+    const gapWeeks = weeksBetween(s.startDate, gapEnd);
+    const estimatedGapLTV = Math.round(gapWeeks * (s.weeklyHours || 0) * s.rate);
+    return estimatedGapLTV + loggedLTV;
   };
   const updateStudent = (id, ch) => setStudents(prev => prev.map(s => s.id === id ? { ...s, ...ch } : s));
   const addStudent = (data) => { setStudents(prev => [...prev, { id: nextId, ...data, active: true }]); setNextId(n => n + 1); };
@@ -481,36 +704,59 @@ export default function App() {
   };
 
   return (
-    <div data-theme={darkMode ? "dark" : "light"} style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)", fontFamily: "'Manrope', sans-serif" }}>
+    <div data-theme={darkMode ? "dark" : "light"} style={{ minHeight: "100dvh", background: "var(--bg)", color: "var(--text)", fontFamily: "'Manrope', sans-serif", paddingBottom: "var(--safe-bottom)", paddingLeft: "var(--safe-left)", paddingRight: "var(--safe-right)" }}>
       <style>{CSS}</style>
 
       {/* Header */}
-      <div style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)", padding: "14px 20px 0", display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--text)" }}>Параллелка</span>
-          <span style={{ fontSize: 10, color: "var(--text-faint)", letterSpacing: "0.06em", textTransform: "uppercase", fontFamily: "'JetBrains Mono', monospace" }}>{calendarMode === "tutor" ? "репетиторство" : "личное"}</span>
+      <div style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)", padding: "calc(14px + var(--safe-top)) 14px 0", display: "flex", flexDirection: "column" }}>
+        <div className="app-header-top" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <span className="app-title-group" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--text)" }}>Параллелка</span>
+            <span style={{ fontSize: 10, color: "var(--text-faint)", letterSpacing: "0.06em", textTransform: "uppercase", fontFamily: "'JetBrains Mono', monospace" }}>
+              {appMode === "planner" ? "планер" : calendarMode === "general" ? "общий календарь" : calendarMode === "tutor" ? "репетиторство" : "личное"}
+            </span>
+          </span>
 
-          {/* Mode switch */}
-          <div style={{ display: "flex", gap: 2, marginLeft: "auto", background: "var(--bg)", borderRadius: 8, padding: 2 }}>
-            <button onClick={() => setCalendarMode("tutor")} style={{ fontSize: 11, fontFamily: "'Manrope', sans-serif", fontWeight: 600, padding: "5px 11px", borderRadius: 6, border: "none", cursor: "pointer", background: calendarMode === "tutor" ? "var(--surface)" : "transparent", color: calendarMode === "tutor" ? "var(--text)" : "var(--text-dim)", boxShadow: calendarMode === "tutor" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
-              📚 Репетиторство
+          {/* Outer switch: Календарь / Планер */}
+          <div className="mode-switch" style={{ display: "flex", gap: 2, marginLeft: "auto", background: "var(--bg)", borderRadius: 8, padding: 2 }}>
+            <button onClick={() => setAppMode("calendar")} style={{ fontSize: 11, fontFamily: "'Manrope', sans-serif", fontWeight: 600, padding: "5px 11px", borderRadius: 6, border: "none", cursor: "pointer", background: appMode === "calendar" ? "var(--surface)" : "transparent", color: appMode === "calendar" ? "var(--text)" : "var(--text-dim)", boxShadow: appMode === "calendar" ? "0 1px 2px rgba(0,0,0,0.08)" : "none", whiteSpace: "nowrap" }}>
+              📅 Календарь
             </button>
-            <button onClick={() => setCalendarMode("personal")} style={{ fontSize: 11, fontFamily: "'Manrope', sans-serif", fontWeight: 600, padding: "5px 11px", borderRadius: 6, border: "none", cursor: "pointer", background: calendarMode === "personal" ? "var(--surface)" : "transparent", color: calendarMode === "personal" ? "var(--text)" : "var(--text-dim)", boxShadow: calendarMode === "personal" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
-              🗓 Личное
+            <button onClick={() => setAppMode("planner")} style={{ fontSize: 11, fontFamily: "'Manrope', sans-serif", fontWeight: 600, padding: "5px 11px", borderRadius: 6, border: "none", cursor: "pointer", background: appMode === "planner" ? "var(--surface)" : "transparent", color: appMode === "planner" ? "var(--text)" : "var(--text-dim)", boxShadow: appMode === "planner" ? "0 1px 2px rgba(0,0,0,0.08)" : "none", whiteSpace: "nowrap" }}>
+              📋 Планер
             </button>
           </div>
 
-          <button onClick={() => setShowSettings(true)} title="Настройки: даты экзаменов" style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 28, height: 28, cursor: "pointer", color: "var(--text-dim)", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            ⚙
-          </button>
-          <button onClick={() => setDarkMode(d => !d)} title={darkMode ? "Светлая тема" : "Тёмная тема"} style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 28, height: 28, cursor: "pointer", color: "var(--text-dim)", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {darkMode ? "☀" : "🌙"}
-          </button>
+          <div className="header-icon-btns" style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+            <button onClick={() => setShowSettings(true)} title="Настройки: даты экзаменов" style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 28, height: 28, cursor: "pointer", color: "var(--text-dim)", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              ⚙
+            </button>
+            <button onClick={() => setDarkMode(d => !d)} title={darkMode ? "Светлая тема" : "Тёмная тема"} style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 28, height: 28, cursor: "pointer", color: "var(--text-dim)", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              {darkMode ? "☀" : "🌙"}
+            </button>
+            <UserButton afterSignOutUrl="/" appearance={{ elements: { userButtonAvatarBox: { width: 28, height: 28 } } }} />
+          </div>
         </div>
 
+        {/* Inner switch: Общий / Репетиторство / Личное — clicking the already-active
+            filter again returns to the combined "Общий" view. */}
+        {appMode === "calendar" && (
+          <div className="nav-zoom-row" style={{ display: "flex", gap: 2, background: "var(--bg)", borderRadius: 8, padding: 2, marginBottom: 10, alignSelf: "flex-start" }}>
+            {[["general", "🔀 Общий"], ["tutor", "📚 Репетиторство"], ["personal", "🗓 Личное"]].map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setCalendarMode(m => (m === key && key !== "general" ? "general" : key))}
+                style={{ fontSize: 11, fontFamily: "'Manrope', sans-serif", fontWeight: 600, padding: "5px 11px", borderRadius: 6, border: "none", cursor: "pointer", background: calendarMode === key ? "var(--surface)" : "transparent", color: calendarMode === key ? "var(--text)" : "var(--text-dim)", boxShadow: calendarMode === key ? "0 1px 2px rgba(0,0,0,0.08)" : "none", whiteSpace: "nowrap" }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Exam countdown */}
-        {(examDates.oge || examDates.ege) && (
-          <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+        {appMode === "calendar" && (examDates.oge || examDates.ege) && (
+          <div className="exam-badges" style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
             {examDates.oge && (() => { const n = daysUntil(examDates.oge); return (
               <span style={{ fontSize: 11, color: n < 0 ? "var(--text-dim)" : "#78350f", background: n < 0 ? "var(--bg)" : "#fef3c7", border: `1px solid ${n < 0 ? "var(--border2)" : "#fcd34d"}`, borderRadius: 6, padding: "3px 9px", fontFamily: "'JetBrains Mono', monospace" }}>
                 ОГЭ {formatDate(examDates.oge)} {n >= 0 ? `· через ${n} дн.` : "· прошёл"}
@@ -524,7 +770,7 @@ export default function App() {
           </div>
         )}
 
-        {calendarMode === "tutor" && (
+        {appMode === "calendar" && calendarMode === "tutor" && (
           <div style={{ display: "flex" }}>
             <button className={`tab-btn ${tab === "schedule" ? "active" : ""}`} onClick={() => setTab("schedule")}>Расписание</button>
             <button className={`tab-btn ${tab === "students" ? "active" : ""}`} onClick={() => setTab("students")}>Ученики ({students.length})</button>
@@ -534,22 +780,21 @@ export default function App() {
 
       {/* Settings modal */}
       {showSettings && (
-        <div className="overlay" onClick={() => setShowSettings(false)}>
-          <div className="popup-card" onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 14 }}>Настройки</div>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Дата ОГЭ</div>
-              <input className="edit-inp" type="date" style={{ width: "100%" }} value={examDates.oge} onChange={e => setExamDate("oge", e.target.value)} />
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Дата ЕГЭ</div>
-              <input className="edit-inp" type="date" style={{ width: "100%" }} value={examDates.ege} onChange={e => setExamDate("ege", e.target.value)} />
-            </div>
-            <button className="save-btn" style={{ width: "100%" }} onClick={() => setShowSettings(false)}>Готово</button>
+        <Sheet onClose={() => setShowSettings(false)}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14 }}>Настройки</div>
+          <div style={{ marginBottom: 12 }}>
+            <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Дата ОГЭ</div>
+            <input className="edit-inp" type="date" style={{ width: "100%", fontSize: 14, padding: "9px 10px" }} value={examDates.oge} onChange={e => setExamDate("oge", e.target.value)} />
           </div>
-        </div>
+          <div style={{ marginBottom: 16 }}>
+            <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Дата ЕГЭ</div>
+            <input className="edit-inp" type="date" style={{ width: "100%", fontSize: 14, padding: "9px 10px" }} value={examDates.ege} onChange={e => setExamDate("ege", e.target.value)} />
+          </div>
+          <button className="save-btn" style={{ width: "100%" }} onClick={() => setShowSettings(false)}>Готово</button>
+        </Sheet>
       )}
 
+      {appMode === "calendar" && <>
       {/* Payment alerts banner */}
       {(() => {
         const alerts = students
@@ -579,8 +824,8 @@ export default function App() {
       })()}
 
       {/* Navigation + zoom */}
-      {(calendarMode === "personal" || (calendarMode === "tutor" && tab === "schedule")) && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "8px 16px", background: "var(--surface)", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
+      {(calendarMode === "general" || calendarMode === "personal" || (calendarMode === "tutor" && tab === "schedule")) && (
+        <div className="nav-zoom-row" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "8px 16px", background: "var(--surface)", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
           <button onClick={goPrevWeek} style={{ background: "none", border: "1px solid var(--border2)", borderRadius: 6, width: 26, height: 26, cursor: "pointer", color: "var(--text-mid)", fontSize: 13 }}>‹</button>
           <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", fontFamily: "'JetBrains Mono', monospace", minWidth: 130, textAlign: "center" }}>
             {calendarZoom === "day" ? formatShortDate(addDays(weekStart, selectedDayIdx)) + `, ${DAYS[selectedDayIdx]}` :
@@ -599,7 +844,7 @@ export default function App() {
         </div>
       )}
 
-      {((calendarMode === "tutor" && tab === "schedule") || calendarMode === "personal") && calendarZoom === "month" && (
+      {((calendarMode === "tutor" && tab === "schedule") || calendarMode === "personal" || calendarMode === "general") && calendarZoom === "month" && (
         <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
             {DAYS.map(d => <div key={d} style={{ fontSize: 10, fontWeight: 600, color: "var(--text-dim)", textAlign: "center", padding: "4px 0" }}>{d}</div>)}
@@ -610,14 +855,15 @@ export default function App() {
               for (let i = 0; i < 42; i++) {
                 const d = addDays(monthStart, i);
                 const inMonth = d.getMonth() === weekStart.getMonth();
+                const today = isToday(d);
                 const dayIdx = d.getDay() === 0 ? 6 : d.getDay() - 1;
                 const dayEvents = eventsVisibleInWeek(sessions, getMonday(d)).filter(e => e.day === dayIdx);
                 const pEvents = eventsVisibleInWeek(personalEvents, getMonday(d)).filter(e => e.day === dayIdx);
                 cells.push(
                   <div key={i} onClick={() => { setSelectedDayIdx(dayIdx); setWeekStart(getMonday(d)); setCalendarZoom("day"); }}
-                    style={{ minHeight: 60, background: inMonth ? "var(--surface)" : "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 5px", cursor: "pointer", opacity: inMonth ? 1 : 0.5 }}
+                    style={{ minHeight: 60, background: today ? "rgba(37,99,235,0.08)" : inMonth ? "var(--surface)" : "var(--bg)", border: today ? "1.5px solid #2563eb" : "1px solid var(--border)", borderRadius: 6, padding: "4px 5px", cursor: "pointer", opacity: inMonth ? 1 : 0.5 }}
                   >
-                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-mid)", marginBottom: 3 }}>{d.getDate()}</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: today ? "white" : "var(--text-mid)", marginBottom: 3, ...(today ? { background: "#2563eb", width: 18, height: 18, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" } : {}) }}>{d.getDate()}</div>
                     {dayEvents.slice(0, 3).map(s => {
                       const st = students.find(x => x.id === s.studentId);
                       const c = getColor(s.studentId);
@@ -636,10 +882,67 @@ export default function App() {
         </div>
       )}
 
+      {calendarMode === "general" && calendarZoom !== "month" && (
+        <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 168px)" }}>
+          <div className="hint-bar">
+            <span>👁</span>
+            <span>Общий обзор: слева — занятия, справа — личное · Только просмотр, редактируй во вкладках выше</span>
+          </div>
+          <div style={{ flex: 1, overflow: "auto", background: "var(--surface2)", WebkitOverflowScrolling: "touch" }} {...swipeDayHandlers}>
+            <div style={{ display: "flex", minWidth: 500 }}>
+              <div style={{ width: 44, flexShrink: 0, borderRight: "1px solid var(--border)", paddingTop: 28, background: "var(--surface)" }}>
+                {Array.from({ length: TOTAL_SLOTS }).map((_, i) => (
+                  <div key={i} style={{ height: SLOT_HEIGHT, display: "flex", alignItems: "flex-start", justifyContent: "flex-end", paddingRight: 7, paddingTop: 2 }}>
+                    {i % 2 === 0 && <span style={{ fontSize: 9, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace", lineHeight: 1 }}>{slotToTime(i)}</span>}
+                  </div>
+                ))}
+              </div>
+              {visibleDays.map(dayIdx => { const today = isToday(addDays(weekStart, dayIdx)); return (
+                <div key={dayIdx} style={{ flex: 1, minWidth: 0, borderRight: "1px solid var(--border)" }}>
+                  <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 11, fontWeight: 600, color: today ? "#2563eb" : "var(--text-dim)", borderBottom: today ? "2px solid #2563eb" : "1px solid var(--border)", background: today ? "rgba(37,99,235,0.08)" : "var(--surface)", position: "sticky", top: 0, zIndex: 2, letterSpacing: "0.05em" }}>
+                    {DAYS[dayIdx]} <span style={today ? { fontWeight: 700, color: "white", fontSize: 10, background: "#2563eb", borderRadius: "50%", width: 16, height: 16, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } : { fontWeight: 400, color: "var(--text-faint)", fontSize: 10 }}>{addDays(weekStart, dayIdx).getDate()}</span>
+                  </div>
+                  <div style={{ position: "relative", height: TOTAL_SLOTS * SLOT_HEIGHT }}>
+                    {Array.from({ length: TOTAL_SLOTS }).map((_, slotIdx) => (
+                      <div key={slotIdx} className="slot-cell" style={{ top: slotIdx * SLOT_HEIGHT, height: SLOT_HEIGHT, borderBottom: `1px solid ${slotIdx % 2 === 1 ? "var(--border2)" : "var(--border)"}`, cursor: "default" }} />
+                    ))}
+                    <div style={{ position: "absolute", top: 0, left: "50%", bottom: 0, width: 1, background: "var(--border)", opacity: 0.6 }} />
+                    {dayLayouts[dayIdx]?.map(s => {
+                      const student = students.find(st => st.id === s.studentId);
+                      if (!student) return null;
+                      const c = getColor(s.studentId);
+                      const height = s.duration * 2 * SLOT_HEIGHT;
+                      const laneW = 48 / s.totalCols;
+                      return (
+                        <div key={"t" + s.id} className="session-block" title={`📚 ${student.name} · ${slotToTime(s.startSlot)}–${slotToTime(s.startSlot + s.duration * 2)}`}
+                          style={{ top: s.startSlot * SLOT_HEIGHT + 1, left: `${s.col * laneW + 0.5}%`, width: `${laneW - 1}%`, height: height - 2, background: c.bg, borderLeftColor: c.accent, zIndex: 2, cursor: "default" }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📚 {student.name.split(" ")[0]}</div>
+                        </div>
+                      );
+                    })}
+                    {personalDayLayouts[dayIdx]?.map(ev => {
+                      const c = PALETTE[ev.colorIdx ?? 0];
+                      const height = ev.duration * 2 * SLOT_HEIGHT;
+                      const laneW = 48 / ev.totalCols;
+                      return (
+                        <div key={"p" + ev.id} className="session-block" title={`🗓 ${ev.title} · ${slotToTime(ev.startSlot)}–${slotToTime(ev.startSlot + ev.duration * 2)}`}
+                          style={{ top: ev.startSlot * SLOT_HEIGHT + 1, left: `${50 + ev.col * laneW + 0.5}%`, width: `${laneW - 1}%`, height: height - 2, background: c.bg, borderLeftColor: c.accent, zIndex: 2, cursor: "default" }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🗓 {ev.title}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ); })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {calendarMode === "tutor" && tab === "schedule" && calendarZoom !== "month" && (
         <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 126px)" }}>
 
-          {/* Chips legend with drag hint */}
+          {/* Chips legend — tap a chip to pick who the next tapped cell is for */}
           <div style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)", padding: "10px 14px", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", flexShrink: 0 }}>
             {activeStudents.map(s => {
               const c = getColor(s.id);
@@ -650,23 +953,20 @@ export default function App() {
               const payStatus = getPaymentStatus(s);
               const sc = STATUS_COLORS[payStatus] || { bg: "var(--bg)", border: "var(--border2)", text: "var(--text-dim)", dot: "var(--text-faint)" };
               const lessonsLeft = s.lessonsPaid ?? 0;
+              const picked = lastPickedStudentId === s.id;
               return (
                 <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <div
-                    className={`student-chip ${ptrDrag?.mode === "new" && ptrDrag?.studentId === s.id ? "dragging-active" : ""}`}
-                    style={{ background: c.bg, borderColor: done ? c.border : "var(--border2)", touchAction: "none" }}
-                    onPointerDown={e => {
-                      e.preventDefault();
-                      const drag = { mode: "new", studentId: s.id, duration: dur, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY };
-                      dragRef.current = drag;
-                      setPtrDrag(drag);
-                    }}
+                    className="student-chip"
+                    title="Тапни, чтобы выбрать — следующая пустая ячейка создаст занятие для этого ученика"
+                    style={{ background: c.bg, borderColor: picked ? c.accent : (done ? c.border : "var(--border2)"), boxShadow: picked ? `0 0 0 2px ${c.accent}55` : "none" }}
+                    onClick={() => setLastPickedStudentId(s.id)}
                   >
                     {payStatus && <span title={payStatus === "overdue" ? "Нужно оплатить" : payStatus === "soon" ? "Осталось последнее занятие" : "Оплачено"} style={{ width: 7, height: 7, borderRadius: "50%", background: sc.dot, display: "inline-block", flexShrink: 0, boxShadow: "0 0 0 2px white" }} />}
                     <span style={{ width: 7, height: 7, borderRadius: "50%", background: c.accent, display: "inline-block", flexShrink: 0 }} />
-                    <span style={{ fontSize: 12, fontWeight: 600, color: c.text, whiteSpace: "nowrap" }}>{s.name}</span>
-                    <span style={{ fontSize: 10, color: done ? c.accent : "var(--text-faint)", background: done ? c.light : "var(--surface2)", padding: "0 5px", borderRadius: 3, fontFamily: "'JetBrains Mono', monospace" }}>
-                      {placed}/{target}
+                    <span className="chip-name" style={{ fontSize: 12, fontWeight: 600, color: c.text, whiteSpace: "nowrap" }}>{s.name}</span>
+                    <span title={done ? "Все занятия на неделю расставлены" : `Расставлено ${placed} из ${target}`} style={{ fontSize: 10, fontWeight: done ? 700 : 400, color: done ? "#065f46" : "var(--text-faint)", background: done ? "#d1fae5" : "var(--surface2)", border: done ? "1px solid #6ee7b7" : "1px solid transparent", padding: "0 5px", borderRadius: 3, fontFamily: "'JetBrains Mono', monospace" }}>
+                      {done ? "✓ " : ""}{placed}/{target}
                     </span>
                     {s.paymentMode === "single" ? (
                       <span title="Оплата разово за занятие" style={{ fontSize: 10, color: "var(--text-dim)", background: "var(--bg)", padding: "0 5px", borderRadius: 3, fontFamily: "'JetBrains Mono', monospace" }}>разово</span>
@@ -710,12 +1010,12 @@ export default function App() {
           {/* Hint */}
           <div className="hint-bar">
             <span>☝</span>
-            <span>{ptrDrag?.active ? "Отпусти, чтобы поставить занятие" : "Зажми блок и перетащи · Перетащи ученика из чипов сверху"}</span>
-            {ptrDrag?.active && <button onClick={() => { dragRef.current = null; setPtrDrag(null); }} style={{ marginLeft: "auto", background: "none", border: "1px solid #93c5fd", color: "#2563eb", borderRadius: 5, padding: "2px 10px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Отмена</button>}
+            <span>Тапни пустую ячейку — создать занятие · Тапни занятие — открыть детали</span>
           </div>
 
           {/* Calendar grid */}
-          <div style={{ flex: 1, overflow: ptrDrag ? "hidden" : "auto", background: "var(--surface2)", touchAction: ptrDrag ? "none" : "auto" }}
+          <div style={{ flex: 1, overflow: "auto", background: "var(--surface2)", WebkitOverflowScrolling: "touch" }}
+            {...swipeDayHandlers}
           >
             <div style={{ display: "flex", minWidth: 500 }}>
               {/* Time labels */}
@@ -728,38 +1028,33 @@ export default function App() {
               </div>
 
               {/* Day columns */}
-              {visibleDays.map(dayIdx => { const dayLabel = DAYS[dayIdx]; return (
+              {visibleDays.map(dayIdx => { const dayLabel = DAYS[dayIdx]; const today = isToday(addDays(weekStart, dayIdx)); return (
                 <div key={dayIdx} style={{ flex: 1, minWidth: 0, borderRight: "1px solid var(--border)" }}>
-                  <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--text-dim)", borderBottom: "1px solid var(--border)", background: "var(--surface)", position: "sticky", top: 0, zIndex: 2, letterSpacing: "0.05em" }}>
-                    {dayLabel} <span style={{ fontWeight: 400, color: "var(--text-faint)", fontSize: 10 }}>{addDays(weekStart, dayIdx).getDate()}</span>
+                  <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 11, fontWeight: 600, color: today ? "#2563eb" : "var(--text-dim)", borderBottom: today ? "2px solid #2563eb" : "1px solid var(--border)", background: today ? "rgba(37,99,235,0.08)" : "var(--surface)", position: "sticky", top: 0, zIndex: 2, letterSpacing: "0.05em" }}>
+                    {dayLabel} <span style={today ? { fontWeight: 700, color: "white", fontSize: 10, background: "#2563eb", borderRadius: "50%", width: 16, height: 16, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } : { fontWeight: 400, color: "var(--text-faint)", fontSize: 10 }}>{addDays(weekStart, dayIdx).getDate()}</span>
                   </div>
 
                   <div style={{ position: "relative", height: TOTAL_SLOTS * SLOT_HEIGHT }}>
-                    {/* Slot cells with data attributes for pointer detection */}
-                    {Array.from({ length: TOTAL_SLOTS }).map((_, slotIdx) => {
-                      const isHover = ptrDrag?.hoverDay === dayIdx && ptrDrag?.hoverSlot === slotIdx;
-                      const hoverC = ptrDrag?.studentId ? getColor(ptrDrag.studentId) : null;
-                      return (
-                        <div
-                          key={slotIdx}
-                          data-day={dayIdx}
-                          data-slot={slotIdx}
-                          className="slot-cell"
-                          style={{
-                            top: slotIdx * SLOT_HEIGHT, height: SLOT_HEIGHT,
-                            borderBottom: `1px solid ${slotIdx % 2 === 1 ? "var(--border2)" : "var(--border)"}`,
-                            background: isHover && hoverC ? hoverC.bg + "99" : undefined,
-                          }}
-                        />
-                      );
-                    })}
+                    {/* Slot cells — tap an empty one to create a session here */}
+                    {Array.from({ length: TOTAL_SLOTS }).map((_, slotIdx) => (
+                      <div
+                        key={slotIdx}
+                        className="slot-cell"
+                        style={{
+                          top: slotIdx * SLOT_HEIGHT, height: SLOT_HEIGHT,
+                          borderBottom: `1px solid ${slotIdx % 2 === 1 ? "var(--border2)" : "var(--border)"}`,
+                        }}
+                        onClick={() => openNewSessionAt(dayIdx, slotIdx)}
+                      />
+                    ))}
 
                     {/* Ghost blocks from personal calendar */}
                     {personalDayLayouts[dayIdx]?.map(ev => {
                       const c = PALETTE[ev.colorIdx ?? 0];
                       const height = ev.duration * 2 * SLOT_HEIGHT;
+                      const timeRange = `${slotToTime(ev.startSlot)}–${slotToTime(ev.startSlot + ev.duration * 2)}`;
                       return (
-                        <div key={"ghost-" + ev.id} style={{ position: "absolute", top: ev.startSlot * SLOT_HEIGHT + 1, left: "1%", width: "98%", height: height - 2, background: `${c.bg}66`, borderLeft: `2px dashed ${c.border}`, borderRadius: 4, padding: "3px 6px", pointerEvents: "none", zIndex: 1, opacity: 0.5 }}>
+                        <div key={"ghost-" + ev.id} title={`🗓 ${ev.title} · ${timeRange}`} style={{ position: "absolute", top: ev.startSlot * SLOT_HEIGHT + 1, left: "1%", width: "98%", height: height - 2, background: `${c.bg}66`, borderLeft: `2px dashed ${c.border}`, borderRadius: 4, padding: "3px 6px", zIndex: 1, opacity: 0.5 }}>
                           <div style={{ fontSize: 9, color: c.accent, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>🗓 {ev.title}</div>
                         </div>
                       );
@@ -786,16 +1081,19 @@ export default function App() {
                           if (!student) return;
                           const c = getColor(s.studentId);
                           const height = s.duration * 2 * SLOT_HEIGHT;
-                          const isMoving = ptrDrag?.id === s.id;
+                          // Only show the rate badge in the single-day (full-width) view — in
+                          // week view the column is too narrow for both, and the name always
+                          // wins (this is also what was silently squeezing the name to 0 width).
+                          const showRate = visibleDays.length === 1 && height > 44;
                           elements.push(
                             <div key={s.id} className="session-block"
-                              style={{ top: s.startSlot * SLOT_HEIGHT + 1, left: "1%", width: "98%", height: height - 2, background: c.bg, borderLeftColor: c.accent, zIndex: 3, cursor: "grab", opacity: isMoving ? 0.3 : 1, touchAction: "none", userSelect: "none", pointerEvents: ptrDrag?.active ? "none" : "auto" }}
-                              onPointerDown={e => { e.preventDefault(); const drag = { mode: "move", id: s.id, studentId: s.studentId, duration: s.duration, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY, clickSession: s }; dragRef.current = drag; setPtrDrag(drag); }}
+                              style={{ top: s.startSlot * SLOT_HEIGHT + 1, left: "1%", width: "98%", height: height - 2, background: c.bg, borderLeftColor: c.accent, zIndex: 3, cursor: "pointer" }}
+                              onClick={() => setPopup({ type: "session", session: s })}
                             >
                               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                                 <span style={{ width: 6, height: 6, borderRadius: "50%", background: c.accent, flexShrink: 0, display: "inline-block" }} />
-                                <span style={{ fontSize: 11, fontWeight: 700, color: c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{s.recurring === false && "1× "}{student.name}</span>
-                                {height > 44 && <span style={{ fontSize: 9, color: c.accent, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>{s.duration}ч · {student.rate.toLocaleString()}₽</span>}
+                                <span style={{ fontSize: 11, fontWeight: 700, color: c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{s.recurring === false && "1× "}{student.name}</span>
+                                {showRate && <span style={{ fontSize: 9, color: c.accent, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>{s.duration}ч · {student.rate.toLocaleString()}₽</span>}
                               </div>
                             </div>
                           );
@@ -825,15 +1123,14 @@ export default function App() {
                                 const laneTop = (s.startSlot - groupStart) * SLOT_HEIGHT + 18;
                                 const laneHeight = s.duration * 2 * SLOT_HEIGHT - 18;
                                 const laneW = 100 / group.length;
-                                const isMoving = ptrDrag?.id === s.id;
                                 return (
                                   <div key={s.id} className="session-block"
-                                    style={{ position: "absolute", top: laneTop, left: `${i * laneW + 0.4}%`, width: `${laneW - 0.8}%`, height: laneHeight - 1, background: c.bg, borderLeft: `3px solid ${c.accent}`, borderRight: i < group.length - 1 ? `1px solid ${c.border}55` : "none", borderRadius: i === 0 ? "0 0 0 4px" : i === group.length-1 ? "0 0 4px 0" : "0", cursor: "grab", padding: "3px 5px", overflow: "hidden", opacity: isMoving ? 0.3 : 1, pointerEvents: ptrDrag?.active ? "none" : "auto", touchAction: "none", userSelect: "none" }}
-                                    onPointerDown={e => { e.preventDefault(); e.stopPropagation(); const drag = { mode: "move", id: s.id, studentId: s.studentId, duration: s.duration, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY, clickSession: s }; dragRef.current = drag; setPtrDrag(drag); }}
+                                    style={{ position: "absolute", top: laneTop, left: `${i * laneW + 0.4}%`, width: `${laneW - 0.8}%`, height: laneHeight - 1, background: c.bg, borderLeft: `3px solid ${c.accent}`, borderRight: i < group.length - 1 ? `1px solid ${c.border}55` : "none", borderRadius: i === 0 ? "0 0 0 4px" : i === group.length-1 ? "0 0 4px 0" : "0", cursor: "pointer", padding: "3px 5px", overflow: "hidden", pointerEvents: "auto" }}
+                                    onClick={e => { e.stopPropagation(); setPopup({ type: "session", session: s }); }}
                                   >
                                     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                       <span style={{ width: 5, height: 5, borderRadius: "50%", background: c.accent, flexShrink: 0, display: "inline-block" }} />
-                                      <span style={{ fontSize: 10, fontWeight: 700, color: c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{s.recurring === false && "1× "}{student.name.split(" ")[0]}</span>
+                                      <span style={{ fontSize: 10, fontWeight: 700, color: c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{s.recurring === false && "1× "}{student.name.split(" ")[0]}</span>
                                     </div>
                                     {laneHeight > 46 && (
                                       <div style={{ fontSize: 9, color: c.accent, fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
@@ -871,6 +1168,22 @@ export default function App() {
               />
             );
           })()}
+
+          {/* Confirm-before-create — shows which student is picked prominently, with a
+              picker to change it, before the session is actually added. */}
+          {newDraft && (() => {
+            return (
+              <NewSessionPopup
+                draft={newDraft} students={activeStudents} getColor={getColor} weekStart={weekStart}
+                onCreate={(studentId, duration, fields) => {
+                  setSessions(prev => [...prev, { id: Date.now(), studentId, duration, ...fields }]);
+                  setLastPickedStudentId(studentId);
+                  setNewDraft(null);
+                }}
+                onCancel={() => setNewDraft(null)}
+              />
+            );
+          })()}
         </div>
       )}
 
@@ -896,6 +1209,18 @@ export default function App() {
           ghostStudents={students}
           ghostGetColor={getColor}
           visibleDays={visibleDays}
+          calendarZoom={calendarZoom}
+          goPrevWeek={goPrevWeek}
+          goNextWeek={goNextWeek}
+        />
+      )}
+      </>}
+
+      {appMode === "planner" && (
+        <PlannerTab
+          tasks={tasks} projects={taskProjects}
+          addTask={addTask} updateTask={updateTask} toggleTaskDone={toggleTaskDone} deleteTask={deleteTask}
+          addProject={addTaskProject} deleteProject={deleteTaskProject}
         />
       )}
     </div>
@@ -904,7 +1229,7 @@ export default function App() {
 
 function RecurrenceControl({ recurring, date, onChange }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
       <button className={`dur-pill ${recurring ? "sel" : ""}`} onClick={() => onChange(true, date)}>Каждую неделю</button>
       <button className={`dur-pill ${!recurring ? "sel" : ""}`} onClick={() => onChange(false, date)}>Разово</button>
       {!recurring && (
@@ -918,6 +1243,7 @@ function SessionPopup({ sess, student, color, weekStart, onMarkDone, onUpdate, o
   const [recurring, setRecurring] = useState(sess.recurring !== false);
   const [date, setDate] = useState(sess.date || isoDate(addDays(weekStart, sess.day)));
   const [startTime, setStartTime] = useState(slotToTime(sess.startSlot));
+  const [day, setDay] = useState(sess.day);
   const c = color;
 
   const handleRecChange = (rec, d) => {
@@ -927,114 +1253,177 @@ function SessionPopup({ sess, student, color, weekStart, onMarkDone, onUpdate, o
 
   const save = () => {
     const newSlot = timeToSlot(startTime);
-    if (recurring) onUpdate({ recurring: true, date: undefined, day: sess.day, startSlot: newSlot });
+    if (recurring) onUpdate({ recurring: true, date: undefined, day, startSlot: newSlot });
     else onUpdate({ recurring: false, date, day: weekdayFromIso(date), startSlot: newSlot });
   };
 
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="popup-card" onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: c.bg, border: `1.5px solid ${c.border}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: c.accent, display: "inline-block" }} />
+    <Sheet onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 8, background: c.bg, border: `1.5px solid ${c.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: c.accent, display: "inline-block" }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>{student.name}</div>
+          <div className="field-label" style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 1, textTransform: "none", letterSpacing: 0 }}>
+            {DAYS[sess.day]}, {slotToTime(sess.startSlot)}–{slotToTime(sess.startSlot + sess.duration * 2)} · {sess.duration}ч
           </div>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>{student.name}</div>
-            <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 1 }}>
-              {DAYS[sess.day]}, {slotToTime(sess.startSlot)}–{slotToTime(sess.startSlot + sess.duration * 2)} · {sess.duration}ч
-            </div>
-          </div>
-        </div>
-        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14, padding: "9px 11px", background: "var(--surface2)", borderRadius: 7, display: "flex", justifyContent: "space-between" }}>
-          <span>{student.subject}</span>
-          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 500 }}>{(student.rate * sess.duration).toLocaleString()} ₽</span>
-        </div>
-
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Точное время начала</div>
-          <input className="edit-inp" type="time" style={{ width: 120 }} value={startTime} onChange={e => setStartTime(e.target.value)} />
-        </div>
-
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Повторение</div>
-          <RecurrenceControl recurring={recurring} date={date} onChange={handleRecChange} />
-        </div>
-
-        <div style={{ marginBottom: 8 }}>
-          <MarkDoneInput label="Занятие прошло, списать −1" onMark={onMarkDone} />
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="save-btn" style={{ flex: 1 }} onClick={save}>Сохранить</button>
-          <button className="del-btn" style={{ width: "auto", padding: "9px 14px" }} onClick={onDelete}>Удалить</button>
         </div>
       </div>
+      <div style={{ fontSize: 14, color: "var(--text-muted)", marginBottom: 14, padding: "10px 11px", background: "var(--surface2)", borderRadius: 7, display: "flex", justifyContent: "space-between" }}>
+        <span>{student.subject}</span>
+        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 500 }}>{(student.rate * sess.duration).toLocaleString()} ₽</span>
+      </div>
+
+      {recurring && (
+        <div style={{ marginBottom: 14 }}>
+          <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>День недели</div>
+          <DayOfWeekPicker day={day} onChange={setDay} />
+        </div>
+      )}
+
+      <div style={{ marginBottom: 14 }}>
+        <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Точное время начала</div>
+        <input className="edit-inp" type="time" style={{ width: 130, fontSize: 14, padding: "8px 10px" }} value={startTime} onChange={e => setStartTime(e.target.value)} />
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Повторение</div>
+        <RecurrenceControl recurring={recurring} date={date} onChange={handleRecChange} />
+      </div>
+
+      <div style={{ marginBottom: 8 }}>
+        <MarkDoneInput label="Занятие прошло, списать −1" onMark={onMarkDone} />
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="save-btn" style={{ flex: 1 }} onClick={save}>Сохранить</button>
+        <button className="del-btn" style={{ width: "auto", padding: "9px 14px" }} onClick={onDelete}>Удалить</button>
+      </div>
+    </Sheet>
+  );
+}
+
+// Confirmation step for a brand-new session dropped from the student chip. Mirrors
+// SessionPopup's header (color swatch + bold name) so the student is unmistakable
+// before anything is actually saved — the drag gesture alone doesn't make that clear
+// on a phone, since the finger covers the chip the whole time.
+function DayOfWeekPicker({ day, onChange }) {
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {DAYS.map((label, i) => (
+        <button key={i} className={`dur-pill ${day === i ? "sel" : ""}`} onClick={() => onChange(i)}>{label}</button>
+      ))}
     </div>
   );
 }
 
-function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, onDelete, ghostLayouts, ghostStudents, ghostGetColor, visibleDays }) {
+function NewSessionPopup({ draft, students, getColor, weekStart, onCreate, onCancel }) {
+  const [studentId, setStudentId] = useState(draft.studentId);
+  const [duration, setDuration] = useState(draft.duration);
+  const [day, setDay] = useState(draft.day);
+  const [recurring, setRecurring] = useState(true);
+  const [date, setDate] = useState(isoDate(addDays(weekStart, draft.day)));
+  const [startTime, setStartTime] = useState(slotToTime(draft.slot));
+
+  const student = students.find(s => s.id === studentId) || students[0];
+  if (!student) return null;
+  const c = getColor(student.id);
+
+  const pickStudent = (s) => {
+    setStudentId(s.id);
+    setDuration(s.sessionDuration || 1);
+  };
+
+  const handleRecChange = (rec, d) => {
+    setRecurring(rec);
+    setDate(d);
+  };
+
+  const create = () => {
+    const slot = timeToSlot(startTime);
+    if (recurring) onCreate(student.id, duration, { recurring: true, date: undefined, day, startSlot: slot });
+    else onCreate(student.id, duration, { recurring: false, date, day: weekdayFromIso(date), startSlot: slot });
+  };
+
+  return (
+    <Sheet onClose={onCancel}>
+      <div className="field-label" style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 10, textTransform: "none", letterSpacing: 0 }}>
+        Новое занятие
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "10px 12px", background: c.bg, borderRadius: 10, border: `1.5px solid ${c.border}` }}>
+        <div style={{ width: 36, height: 36, borderRadius: 9, background: c.light, border: `1.5px solid ${c.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <span style={{ width: 9, height: 9, borderRadius: "50%", background: c.accent, display: "inline-block" }} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 17, fontWeight: 700, color: c.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{student.name}</div>
+          <div style={{ fontSize: 13, color: c.text, opacity: 0.85, marginTop: 1 }}>{student.subject} · {(student.rate * duration).toLocaleString()} ₽</div>
+        </div>
+      </div>
+
+      {students.length > 1 && (
+        <div style={{ marginBottom: 14 }}>
+          <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Другой ученик</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {students.filter(s => s.id !== student.id).map(s => {
+              const sc = getColor(s.id);
+              return (
+                <button key={s.id} onClick={() => pickStudent(s)} className="dur-pill" style={{ borderColor: sc.border, color: sc.text, background: sc.bg }}>
+                  {s.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginBottom: 14 }}>
+        <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Длительность</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {DURATIONS.map(d => <button key={d} className={`dur-pill ${duration === d ? "sel" : ""}`} onClick={() => setDuration(d)}>{d}ч</button>)}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>День недели</div>
+        <DayOfWeekPicker day={day} onChange={setDay} />
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Точное время начала</div>
+        <input className="edit-inp" type="time" style={{ width: 130, fontSize: 14, padding: "8px 10px" }} value={startTime} onChange={e => setStartTime(e.target.value)} />
+      </div>
+
+      <div style={{ marginBottom: 18 }}>
+        <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Повторение</div>
+        <RecurrenceControl recurring={recurring} date={date} onChange={handleRecChange} />
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="save-btn" style={{ flex: 1 }} onClick={create}>Создать занятие</button>
+        <button className="cancel-btn-sm" onClick={onCancel}>Отмена</button>
+      </div>
+    </Sheet>
+  );
+}
+
+function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, onDelete, ghostLayouts, ghostStudents, ghostGetColor, visibleDays, calendarZoom, goPrevWeek, goNextWeek }) {
   const [popup, setPopup] = useState(null);
   const [title, setTitle] = useState("");
   const [duration, setDuration] = useState(1);
   const [colorIdx, setColorIdx] = useState(0);
+  const [day, setDay] = useState(0);
   const [recurring, setRecurring] = useState(true);
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("");
-  const [ptrDrag, setPtrDrag] = useState(null); // { id, duration, hoverDay, hoverSlot }
-  const dragRef = useRef(null);
 
-  useEffect(() => {
-    if (!ptrDrag) return;
-    const onMove = (e) => {
-      e.preventDefault();
-      const d = dragRef.current;
-      if (!d) return;
-      if (!d.active) {
-        const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
-        if (dx * dx + dy * dy < 25) return;
-        dragRef.current = { ...d, active: true };
-        setPtrDrag({ ...dragRef.current });
-        return;
-      }
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const pday = el?.dataset?.pday, pslot = el?.dataset?.pslot;
-      if (pday != null && pslot != null) {
-        const hDay = +pday, hSlot = +pslot;
-        if (d.hoverDay !== hDay || d.hoverSlot !== hSlot) {
-          dragRef.current = { ...dragRef.current, hoverDay: hDay, hoverSlot: hSlot };
-          setPtrDrag({ ...dragRef.current });
-        }
-      }
-    };
-    const onUp = () => {
-      const d = dragRef.current;
-      if (!d) return;
-      if (!d.active) {
-        if (d.clickEvent) openEdit(d.clickEvent);
-      } else if (d.hoverDay != null && d.hoverSlot != null && d.hoverSlot + d.duration * 2 <= TOTAL_SLOTS) {
-        onUpdate(d.id, { day: d.hoverDay, startSlot: d.hoverSlot });
-      }
-      dragRef.current = null;
-      setPtrDrag(null);
-    };
-    document.addEventListener('pointermove', onMove, { passive: false });
-    document.addEventListener('pointerup', onUp);
-    document.addEventListener('pointercancel', onUp);
-    return () => {
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
-      document.removeEventListener('pointercancel', onUp);
-    };
-  }, [!!ptrDrag]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const openNew = (day, slot) => {
-    setTitle(""); setDuration(1); setColorIdx(0);
-    setRecurring(true); setDate(isoDate(addDays(weekStart, day)));
+  const openNew = (d, slot) => {
+    setTitle(""); setDuration(1); setColorIdx(0); setDay(d);
+    setRecurring(true); setDate(isoDate(addDays(weekStart, d)));
     setStartTime(slotToTime(slot));
-    setPopup({ type: "new", day, slot });
+    setPopup({ type: "new", day: d, slot });
   };
   const openEdit = (ev) => {
-    setTitle(ev.title); setDuration(ev.duration); setColorIdx(ev.colorIdx ?? 0);
+    setTitle(ev.title); setDuration(ev.duration); setColorIdx(ev.colorIdx ?? 0); setDay(ev.day);
     setRecurring(ev.recurring !== false);
     setDate(ev.date || isoDate(addDays(weekStart, ev.day)));
     setStartTime(slotToTime(ev.startSlot));
@@ -1042,18 +1431,18 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
   };
 
   const handleRecChange = (rec, d) => { setRecurring(rec); setDate(d); };
+  const swipeDayHandlers = useSwipeDay(calendarZoom === "day", goPrevWeek, goNextWeek);
 
   const submit = () => {
     if (!title.trim()) return;
     const slot = timeToSlot(startTime);
     if (slot + duration * 2 > TOTAL_SLOTS || slot < 0) return;
     const recFields = recurring ? { recurring: true, date: undefined } : { recurring: false, date };
+    const effectiveDay = recurring ? day : weekdayFromIso(date);
     if (popup.type === "new") {
-      const day = recurring ? popup.day : weekdayFromIso(date);
-      onAdd({ day, startSlot: slot, duration, title: title.trim(), colorIdx, ...recFields });
+      onAdd({ day: effectiveDay, startSlot: slot, duration, title: title.trim(), colorIdx, ...recFields });
     } else {
-      const day = recurring ? popup.event.day : weekdayFromIso(date);
-      onUpdate(popup.event.id, { title: title.trim(), duration, colorIdx, day, startSlot: slot, ...recFields });
+      onUpdate(popup.event.id, { title: title.trim(), duration, colorIdx, day: effectiveDay, startSlot: slot, ...recFields });
     }
     setPopup(null);
   };
@@ -1063,11 +1452,11 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
       {/* Hint */}
       <div className="hint-bar">
         <span>☝</span>
-        <span>{ptrDrag?.active ? "Отпусти, чтобы переместить" : "Зажми блок и перетащи · Кликни на пустое место — добавить"}</span>
-        {ptrDrag?.active && <button onClick={() => { dragRef.current = null; setPtrDrag(null); }} style={{ marginLeft: "auto", background: "none", border: "1px solid #93c5fd", color: "#2563eb", borderRadius: 5, padding: "2px 10px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Отмена</button>}
+        <span>Тапни пустое место — добавить · Тапни событие — открыть детали</span>
       </div>
 
-      <div style={{ flex: 1, overflow: ptrDrag ? "hidden" : "auto", background: "var(--surface2)", touchAction: ptrDrag ? "none" : "auto" }}
+      <div style={{ flex: 1, overflow: "auto", background: "var(--surface2)", WebkitOverflowScrolling: "touch" }}
+        {...swipeDayHandlers}
       >
         <div style={{ display: "flex", minWidth: 500 }}>
           <div style={{ width: 44, flexShrink: 0, borderRight: "1px solid var(--border)", paddingTop: 28, background: "var(--surface)" }}>
@@ -1078,24 +1467,19 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
             ))}
           </div>
 
-          {visibleDays.map(dayIdx => { const dayLabel = DAYS[dayIdx]; return (
+          {visibleDays.map(dayIdx => { const dayLabel = DAYS[dayIdx]; const today = isToday(addDays(weekStart, dayIdx)); return (
             <div key={dayIdx} style={{ flex: 1, minWidth: 0, borderRight: "1px solid var(--border)" }}>
-              <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--text-dim)", borderBottom: "1px solid var(--border)", background: "var(--surface)", position: "sticky", top: 0, zIndex: 2, letterSpacing: "0.05em" }}>
-                {dayLabel} <span style={{ fontWeight: 400, color: "var(--text-faint)", fontSize: 10 }}>{addDays(weekStart, dayIdx).getDate()}</span>
+              <div style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 11, fontWeight: 600, color: today ? "#2563eb" : "var(--text-dim)", borderBottom: today ? "2px solid #2563eb" : "1px solid var(--border)", background: today ? "rgba(37,99,235,0.08)" : "var(--surface)", position: "sticky", top: 0, zIndex: 2, letterSpacing: "0.05em" }}>
+                {dayLabel} <span style={today ? { fontWeight: 700, color: "white", fontSize: 10, background: "#2563eb", borderRadius: "50%", width: 16, height: 16, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } : { fontWeight: 400, color: "var(--text-faint)", fontSize: 10 }}>{addDays(weekStart, dayIdx).getDate()}</span>
               </div>
               <div style={{ position: "relative", height: TOTAL_SLOTS * SLOT_HEIGHT }}>
-                {Array.from({ length: TOTAL_SLOTS }).map((_, slotIdx) => {
-                  const isHover = ptrDrag?.hoverDay === dayIdx && ptrDrag?.hoverSlot === slotIdx;
-                  return (
-                    <div key={slotIdx}
-                      data-pday={dayIdx}
-                      data-pslot={slotIdx}
-                      className="slot-cell"
-                      style={{ top: slotIdx * SLOT_HEIGHT, height: SLOT_HEIGHT, borderBottom: `1px solid ${slotIdx % 2 === 1 ? "var(--border2)" : "var(--border)"}`, background: isHover ? "rgba(37,99,235,0.08)" : undefined }}
-                      onClick={() => { if (!ptrDrag) openNew(dayIdx, slotIdx); }}
-                    />
-                  );
-                })}
+                {Array.from({ length: TOTAL_SLOTS }).map((_, slotIdx) => (
+                  <div key={slotIdx}
+                    className="slot-cell"
+                    style={{ top: slotIdx * SLOT_HEIGHT, height: SLOT_HEIGHT, borderBottom: `1px solid ${slotIdx % 2 === 1 ? "var(--border2)" : "var(--border)"}` }}
+                    onClick={() => openNew(dayIdx, slotIdx)}
+                  />
+                ))}
 
                 {/* Ghost blocks from tutor calendar */}
                 {ghostLayouts[dayIdx]?.map(sess => {
@@ -1103,8 +1487,9 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
                   if (!student) return null;
                   const c = ghostGetColor(sess.studentId);
                   const height = sess.duration * 2 * SLOT_HEIGHT;
+                  const timeRange = `${slotToTime(sess.startSlot)}–${slotToTime(sess.startSlot + sess.duration * 2)}`;
                   return (
-                    <div key={"ghost-" + sess.id} style={{ position: "absolute", top: sess.startSlot * SLOT_HEIGHT + 1, left: "1%", width: "98%", height: height - 2, background: `${c.bg}66`, borderLeft: `2px dashed ${c.border}`, borderRadius: 4, padding: "3px 6px", pointerEvents: "none", zIndex: 1, opacity: 0.5 }}>
+                    <div key={"ghost-" + sess.id} title={`📚 ${student.name} · ${timeRange}`} style={{ position: "absolute", top: sess.startSlot * SLOT_HEIGHT + 1, left: "1%", width: "98%", height: height - 2, background: `${c.bg}66`, borderLeft: `2px dashed ${c.border}`, borderRadius: 4, padding: "3px 6px", zIndex: 1, opacity: 0.5 }}>
                       <div style={{ fontSize: 9, color: c.accent, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📚 {student.name}</div>
                     </div>
                   );
@@ -1115,16 +1500,16 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
                   const c = PALETTE[ev.colorIdx ?? 0];
                   const wPct = 100 / ev.totalCols;
                   const height = ev.duration * 2 * SLOT_HEIGHT;
-                  const isMoving = ptrDrag?.id === ev.id;
+                  const restStyle = { top: ev.startSlot * SLOT_HEIGHT + 1, left: `${ev.col * wPct + 0.5}%`, width: `${wPct - 1}%`, height: height - 2 };
                   return (
                     <div key={ev.id} className="session-block"
-                      style={{ top: ev.startSlot * SLOT_HEIGHT + 1, left: `${ev.col * wPct + 0.5}%`, width: `${wPct - 1}%`, height: height - 2, background: c.bg, borderLeftColor: c.accent, zIndex: 2, cursor: "grab", opacity: isMoving ? 0.3 : 1, touchAction: "none", userSelect: "none", pointerEvents: ptrDrag?.active ? "none" : "auto" }}
-                      onPointerDown={e => { e.preventDefault(); const drag = { id: ev.id, duration: ev.duration, hoverDay: null, hoverSlot: null, active: false, startX: e.clientX, startY: e.clientY, clickEvent: ev }; dragRef.current = drag; setPtrDrag(drag); }}
+                      style={{ ...restStyle, background: c.bg, borderLeftColor: c.accent, zIndex: 2, cursor: "pointer" }}
+                      onClick={() => openEdit(ev)}
                     >
                       <div style={{ fontSize: 11, fontWeight: 700, color: c.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.3 }}>
                         {ev.recurring === false && "1× "}{ev.title}
                       </div>
-                      {height > 44 && <div style={{ fontSize: 9, color: c.accent, fontFamily: "'JetBrains Mono', monospace", marginTop: 1 }}>{ev.duration}ч</div>}
+                      {visibleDays.length === 1 && height > 44 && <div style={{ fontSize: 9, color: c.accent, fontFamily: "'JetBrains Mono', monospace", marginTop: 1 }}>{ev.duration}ч</div>}
                     </div>
                   );
                 })}
@@ -1135,45 +1520,49 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
       </div>
 
       {popup && (
-        <div className="overlay" onClick={() => setPopup(null)}>
-          <div className="popup-card" onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 12 }}>
-              {popup.type === "new" ? `${DAYS[popup.day]}, ${slotToTime(popup.slot)}` : `${DAYS[popup.event.day]}, ${slotToTime(popup.event.startSlot)}`}
-            </div>
+        <Sheet onClose={() => setPopup(null)}>
+          <div className="field-label" style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 12, textTransform: "none", letterSpacing: 0 }}>
+            {popup.type === "new" ? `${DAYS[popup.day]}, ${slotToTime(popup.slot)}` : `${DAYS[popup.event.day]}, ${slotToTime(popup.event.startSlot)}`}
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Что это</div>
+            <input className="edit-inp" style={{ width: "100%", fontSize: 14, padding: "9px 10px" }} placeholder="Пара в вузе / Спортзал / ..." value={title} onChange={e => setTitle(e.target.value)} autoFocus onKeyDown={e => e.key === "Enter" && submit()} />
+          </div>
+          {recurring && (
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Что это</div>
-              <input className="edit-inp" style={{ width: "100%" }} placeholder="Пара в вузе / Спортзал / ..." value={title} onChange={e => setTitle(e.target.value)} autoFocus onKeyDown={e => e.key === "Enter" && submit()} />
+              <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>День недели</div>
+              <DayOfWeekPicker day={day} onChange={setDay} />
             </div>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Точное время начала</div>
-              <input className="edit-inp" type="time" style={{ width: 120 }} value={startTime} onChange={e => setStartTime(e.target.value)} />
-            </div>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Длительность</div>
-              <div style={{ display: "flex", gap: 4 }}>
-                {DURATIONS.map(d => <button key={d} className={`dur-pill ${duration === d ? "sel" : ""}`} onClick={() => setDuration(d)}>{d}ч</button>)}
-              </div>
-            </div>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Повторение</div>
-              <RecurrenceControl recurring={recurring} date={date} onChange={handleRecChange} />
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Цвет</div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {PALETTE.map((c, i) => (
-                  <button key={i} onClick={() => setColorIdx(i)} style={{ width: 22, height: 22, borderRadius: "50%", background: c.accent, border: colorIdx === i ? "2px solid var(--text)" : "2px solid transparent", cursor: "pointer", padding: 0 }} />
-                ))}
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="save-btn" style={{ flex: 1 }} onClick={submit}>{popup.type === "new" ? "Добавить" : "Сохранить"}</button>
-              {popup.type === "edit" && (
-                  <button className="del-btn" style={{ width: "auto", padding: "9px 14px" }} onClick={() => { onDelete(popup.event.id); setPopup(null); }}>Удалить</button>
-              )}
+          )}
+          <div style={{ marginBottom: 12 }}>
+            <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Точное время начала</div>
+            <input className="edit-inp" type="time" style={{ width: 130, fontSize: 14, padding: "8px 10px" }} value={startTime} onChange={e => setStartTime(e.target.value)} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Длительность</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {DURATIONS.map(d => <button key={d} className={`dur-pill ${duration === d ? "sel" : ""}`} onClick={() => setDuration(d)}>{d}ч</button>)}
             </div>
           </div>
-        </div>
+          <div style={{ marginBottom: 12 }}>
+            <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Повторение</div>
+            <RecurrenceControl recurring={recurring} date={date} onChange={handleRecChange} />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Цвет</div>
+            <div style={{ display: "flex", gap: 10 }}>
+              {PALETTE.map((c, i) => (
+                <button key={i} onClick={() => setColorIdx(i)} style={{ width: 28, height: 28, borderRadius: "50%", background: c.accent, border: colorIdx === i ? "2px solid var(--text)" : "2px solid transparent", cursor: "pointer", padding: 0 }} />
+              ))}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="save-btn" style={{ flex: 1 }} onClick={submit}>{popup.type === "new" ? "Добавить" : "Сохранить"}</button>
+            {popup.type === "edit" && (
+                <button className="del-btn" style={{ width: "auto", padding: "9px 14px" }} onClick={() => { onDelete(popup.event.id); setPopup(null); }}>Удалить</button>
+            )}
+          </div>
+        </Sheet>
       )}
     </div>
   );
@@ -1189,9 +1578,9 @@ function PayInput({ onAdd, defaultAmount }) {
     setVal(defaultAmount ? String(defaultAmount) : "");
   };
   return (
-    <span style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+    <span className="inline-form-row" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
       <input
-        className="edit-inp"
+        className="edit-inp inline-form-field"
         type="number"
         placeholder={defaultAmount ? `напр. ${defaultAmount}` : "кол-во"}
         style={{ width: 64, padding: "4px 7px", fontSize: 12 }}
@@ -1200,13 +1589,13 @@ function PayInput({ onAdd, defaultAmount }) {
         onKeyDown={e => e.key === "Enter" && submit()}
       />
       <input
-        className="edit-inp"
+        className="edit-inp inline-form-field"
         type="date"
         style={{ width: 118, padding: "4px 7px", fontSize: 12 }}
         value={date}
         onChange={e => setDate(e.target.value)}
       />
-      <button onClick={submit} style={{ fontSize: 11, fontWeight: 600, background: "#ecfdf5", border: "1px solid #6ee7b7", color: "#065f46", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
+      <button className="inline-form-btn" onClick={submit} style={{ fontSize: 11, fontWeight: 600, background: "#ecfdf5", border: "1px solid #6ee7b7", color: "#065f46", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
         Внесли оплату
       </button>
     </span>
@@ -1223,16 +1612,16 @@ function MarkDoneInput({ onMark, label }) {
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+      <div className="inline-form-row" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         <input
-          className="edit-inp"
+          className="edit-inp inline-form-field"
           type="date"
           style={{ width: 118, padding: "4px 7px", fontSize: 12 }}
           value={date}
           onChange={e => setDate(e.target.value)}
         />
         <input
-          className="edit-inp"
+          className="edit-inp inline-form-field"
           type="text"
           placeholder="что прошли (необязательно)"
           style={{ flex: 1, minWidth: 140, padding: "4px 7px", fontSize: 12 }}
@@ -1240,7 +1629,7 @@ function MarkDoneInput({ onMark, label }) {
           onChange={e => setNote(e.target.value)}
           onKeyDown={e => e.key === "Enter" && submit()}
         />
-        <button onClick={submit} style={{ fontSize: 11, fontWeight: 600, background: "var(--surface)", border: "1px solid var(--border2)", color: "var(--text-mid)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
+        <button className="inline-form-btn" onClick={submit} style={{ fontSize: 11, fontWeight: 600, background: "var(--surface)", border: "1px solid var(--border2)", color: "var(--text-mid)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
           {label || "Занятие прошло −1"}
         </button>
       </div>
@@ -1255,8 +1644,9 @@ function NotesField({ value, onSave }) {
   if (!editing) {
     return (
       <div
+        className="notes-field"
         onClick={() => { setText(value); setEditing(true); }}
-        style={{ fontSize: 12, color: value ? "var(--text-mid)" : "var(--text-faint)", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 7, padding: "6px 10px", cursor: "pointer", minHeight: 14, fontFamily: "'Manrope', sans-serif" }}
+        style={{ fontSize: 12, color: value ? "var(--text-mid)" : "var(--text-faint)", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 7, padding: "6px 10px", cursor: "pointer", minHeight: 14, fontFamily: "'Manrope', sans-serif", display: "flex", alignItems: "center" }}
       >
         {value || "+ заметка по ученику (что проходим, слабые темы...)"}
       </div>
@@ -1282,11 +1672,11 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
   const [openHistoryId, setOpenHistoryId] = useState(null);
   const [ef, setEf] = useState({});
   const [showAdd, setShowAdd] = useState(false);
-  const [af, setAf] = useState({ name: "", subject: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", parentContact: "", colorIdx: null });
+  const [af, setAf] = useState({ name: "", subject: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentContact: "", parentName: "", parentContact: "", colorIdx: null, startDate: isoDate(new Date()) });
 
   const startEdit = (s) => {
     setEditId(s.id);
-    setEf({ name: s.name, subject: s.subject, rate: String(s.rate), weeklyHours: String(s.weeklyHours), sessionDuration: s.sessionDuration, paymentMode: s.paymentMode || "subscription", lessonsPerBundle: String(s.lessonsPerBundle ?? 4), parentContact: s.parentContact || "", colorIdx: s.colorIdx ?? null });
+    setEf({ name: s.name, subject: s.subject, rate: String(s.rate), weeklyHours: String(s.weeklyHours), sessionDuration: s.sessionDuration, paymentMode: s.paymentMode || "subscription", lessonsPerBundle: String(s.lessonsPerBundle ?? 4), studentContact: s.studentContact || "", parentName: s.parentName || "", parentContact: s.parentContact || "", colorIdx: s.colorIdx ?? null, startDate: s.startDate || "", endDate: s.endDate || "" });
   };
   const saveEdit = (id) => {
     updateStudent(id, {
@@ -1297,8 +1687,12 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
       sessionDuration: ef.sessionDuration,
       paymentMode: ef.paymentMode,
       lessonsPerBundle: parseInt(ef.lessonsPerBundle) || 4,
+      studentContact: ef.studentContact.trim(),
+      parentName: ef.parentName.trim(),
       parentContact: ef.parentContact.trim(),
       colorIdx: ef.colorIdx,
+      startDate: ef.startDate || "",
+      endDate: ef.endDate || "",
     });
     setEditId(null);
   };
@@ -1308,10 +1702,10 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
       name: af.name.trim(), subject: af.subject.trim() || "Химия", rate: parseInt(af.rate) || 3000,
       weeklyHours: parseFloat(af.weeklyHours) || 2, sessionDuration: af.sessionDuration,
       lessonsPaid: parseInt(af.lessonsPaid) || 0, paymentMode: af.paymentMode,
-      lessonsPerBundle: parseInt(af.lessonsPerBundle) || 4, parentContact: af.parentContact.trim(), notes: "",
-      colorIdx: af.colorIdx,
+      lessonsPerBundle: parseInt(af.lessonsPerBundle) || 4, studentContact: af.studentContact.trim(), parentName: af.parentName.trim(), parentContact: af.parentContact.trim(), notes: "",
+      colorIdx: af.colorIdx, startDate: af.startDate,
     });
-    setAf({ name: "", subject: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", parentContact: "", colorIdx: null });
+    setAf({ name: "", subject: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentContact: "", parentName: "", parentContact: "", colorIdx: null, startDate: isoDate(new Date()) });
     setShowAdd(false);
   };
 
@@ -1347,6 +1741,10 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                   </Field>
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <Field label="Начали заниматься"><input className="edit-inp" type="date" style={{ width: 148 }} value={ef.startDate} onChange={e => setEf(f => ({ ...f, startDate: e.target.value }))} /></Field>
+                  <Field label="Закончили (если да)"><input className="edit-inp" type="date" style={{ width: 148 }} value={ef.endDate} onChange={e => setEf(f => ({ ...f, endDate: e.target.value }))} /></Field>
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
                   <Field label="Оплата">
                     <div style={{ display: "flex", gap: 4 }}>
                       {Object.entries(PAYMENT_MODE_LABELS).map(([key, label]) => (
@@ -1357,7 +1755,6 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                   {ef.paymentMode === "subscription" && (
                     <Field label="Занятий в абонементе"><input className="edit-inp" type="number" style={{ width: 70 }} value={ef.lessonsPerBundle} onChange={e => setEf(f => ({ ...f, lessonsPerBundle: e.target.value }))} /></Field>
                   )}
-                  <Field label="Контакт родителя"><input className="edit-inp" style={{ width: 160 }} placeholder="@username / +7..." value={ef.parentContact} onChange={e => setEf(f => ({ ...f, parentContact: e.target.value }))} /></Field>
                   <Field label="Цвет">
                     <div style={{ display: "flex", gap: 5 }}>
                       {PALETTE.map((c, i) => (
@@ -1365,10 +1762,15 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                       ))}
                     </div>
                   </Field>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button className="save-btn" onClick={() => saveEdit(s.id)}>Сохранить</button>
-                    <button className="cancel-btn-sm" onClick={() => setEditId(null)}>Отмена</button>
-                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <Field label="Контакт ученика"><input className="edit-inp" style={{ width: 160 }} placeholder="@username / +7..." value={ef.studentContact} onChange={e => setEf(f => ({ ...f, studentContact: e.target.value }))} /></Field>
+                  <Field label="Имя родителя"><input className="edit-inp" style={{ width: 130 }} placeholder="Ирина" value={ef.parentName} onChange={e => setEf(f => ({ ...f, parentName: e.target.value }))} /></Field>
+                  <Field label="Контакт родителя"><input className="edit-inp" style={{ width: 160 }} placeholder="@username / +7..." value={ef.parentContact} onChange={e => setEf(f => ({ ...f, parentContact: e.target.value }))} /></Field>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button className="save-btn" onClick={() => saveEdit(s.id)}>Сохранить</button>
+                  <button className="cancel-btn-sm" onClick={() => setEditId(null)}>Отмена</button>
                 </div>
               </div>
             ) : (
@@ -1380,20 +1782,6 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 13, fontWeight: 600 }}>{s.name}</span>
                     <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{s.subject}</span>
-                    {s.parentContact && (
-                      <button
-                        onClick={() => {
-                          const c = s.parentContact.trim();
-                          if (c.startsWith("@")) window.open(`https://t.me/${c.slice(1)}`, "_blank");
-                          else if (c.startsWith("+") || /^\d/.test(c)) window.open(`tel:${c.replace(/\s/g, "")}`, "_blank");
-                          else window.open(`https://t.me/${c}`, "_blank");
-                        }}
-                        title={`Написать родителю: ${s.parentContact}`}
-                        style={{ fontSize: 10, color: "#2563eb", background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 8, padding: "1px 7px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
-                      >
-                        ✉ {s.parentContact}
-                      </button>
-                    )}
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 3, display: "flex", gap: 8, flexWrap: "wrap", fontFamily: "'JetBrains Mono', monospace" }}>
                     <span>{s.weeklyHours}ч/нед</span>
@@ -1407,11 +1795,43 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{s.rate.toLocaleString()} ₽</div>
                   <div style={{ fontSize: 10, color: "var(--text-faint)" }}>в час</div>
-                  <div style={{ fontSize: 9, color: "var(--text-dim)", marginTop: 2, fontFamily: "'JetBrains Mono', monospace" }} title="Lifetime Value">LTV {getStudentLTV(s).toLocaleString()} ₽</div>
+                  <div style={{ fontSize: 9, color: "var(--text-dim)", marginTop: 2, fontFamily: "'JetBrains Mono', monospace" }} title={s.startDate ? `С ${formatDate(s.startDate)}: период до первой отметки «занятие прошло» — оценка по ${s.weeklyHours}ч/нед × ${s.rate}₽, дальше — по факту отмеченных занятий` : "Lifetime Value"}>
+                    {s.startDate ? "~" : ""}LTV {getStudentLTV(s).toLocaleString()} ₽
+                  </div>
+                  {s.startDate && <div style={{ fontSize: 9, color: "var(--text-faint)" }}>с {formatDate(s.startDate)}</div>}
                 </div>
                 <button className="iBtn" onClick={() => startEdit(s)}>✎</button>
                 <button className="iBtn" title="В архив" onClick={() => archiveStudent(s.id)} style={{ fontSize: 11 }}>📦</button>
               </div>
+
+              {/* Contacts — separate line: the student's own contact, and the parent's name + contact */}
+              {(s.studentContact || s.parentName || s.parentContact) && (
+                <div style={{ paddingLeft: 54, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {s.studentContact && (
+                    <button
+                      onClick={() => openContact(s.studentContact)}
+                      title={`Написать ученику: ${s.studentContact}`}
+                      className="inline-form-btn"
+                      style={{ fontSize: 11, color: "var(--text-mid)", background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
+                    >
+                      🎓 {s.studentContact}
+                    </button>
+                  )}
+                  {s.parentContact && (
+                    <button
+                      onClick={() => openContact(s.parentContact)}
+                      title={`Написать родителю: ${s.parentContact}`}
+                      className="inline-form-btn"
+                      style={{ fontSize: 11, color: "#2563eb", background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
+                    >
+                      👪 {s.parentName ? `${s.parentName}: ` : ""}{s.parentContact}
+                    </button>
+                  )}
+                  {!s.parentContact && s.parentName && (
+                    <span style={{ fontSize: 11, color: "var(--text-faint)", padding: "3px 9px" }}>👪 {s.parentName}</span>
+                  )}
+                </div>
+              )}
 
               {/* Notes — visible right where you check off a lesson */}
               <div style={{ paddingLeft: 54 }}>
@@ -1434,10 +1854,11 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                         )}
                         <MarkDoneInput onMark={(date, note) => markLessonDone(s.id, date, note)} />
                         <button
-                          onClick={() => setOpenHistoryId(openHistoryId === s.id ? null : s.id)}
+                          onClick={() => setOpenHistoryId(s.id)}
+                          className="inline-form-btn"
                           style={{ fontSize: 11, color: "var(--text-dim)", background: "none", border: "1px solid var(--border2)", borderRadius: 8, padding: "5px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
                         >
-                          История {openHistoryId === s.id ? "▲" : "▼"} {s.history?.length ? `(${s.history.length})` : ""}
+                          История {s.history?.length ? `(${s.history.length})` : ""}
                         </button>
                       </>
                     );
@@ -1464,45 +1885,57 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                       <MarkDoneInput onMark={(date, note) => markLessonDone(s.id, date, note)} />
                       <PayInput onAdd={(n, date) => addLessons(s.id, n, date)} defaultAmount={s.lessonsPerBundle} />
                       <button
-                        onClick={() => setOpenHistoryId(openHistoryId === s.id ? null : s.id)}
+                        onClick={() => setOpenHistoryId(s.id)}
+                        className="inline-form-btn"
                         style={{ fontSize: 11, color: "var(--text-dim)", background: "none", border: "1px solid var(--border2)", borderRadius: 8, padding: "5px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
                       >
-                        История {openHistoryId === s.id ? "▲" : "▼"} {s.history?.length ? `(${s.history.length})` : ""}
+                        История {s.history?.length ? `(${s.history.length})` : ""}
                       </button>
                     </>
                   );
                 })()}
               </div>
-
-              {/* History panel */}
-              {openHistoryId === s.id && (
-                <div style={{ paddingLeft: 54, marginTop: 2 }}>
-                  {(!s.history || s.history.length === 0) ? (
-                    <div style={{ fontSize: 11, color: "var(--text-faint)", padding: "6px 0" }}>Пока нет записей</div>
-                  ) : (
-                    <div style={{ background: "var(--surface2)", borderRadius: 8, padding: "6px 10px", maxHeight: 180, overflowY: "auto" }}>
-                      {[...s.history].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id)).map(ev => (
-                        <div key={ev.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-                          <span style={{ fontSize: 12, marginTop: 1 }}>{ev.type === "payment" ? "💰" : "✓"}</span>
-                          <span style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "'JetBrains Mono', monospace", width: 48, flexShrink: 0, marginTop: 1 }}>{formatDate(ev.date)}</span>
-                          <span style={{ fontSize: 12, color: "var(--text-mid)", flex: 1 }}>
-                            {ev.type === "payment" ? `Оплата: +${ev.amount} занятий` : "Занятие прошло (−1)"}
-                            {ev.type === "lesson" && ev.note && (
-                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }}>«{ev.note}»</div>
-                            )}
-                          </span>
-                          <button onClick={() => deleteHistoryEvent(s.id, ev.id)} title="Удалить запись и откатить баланс" className="iBtn del" style={{ fontSize: 11 }}>✕</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
               </div>
             )}
           </div>
         );
       })}
+
+      {/* Full history modal — every payment and lesson, oldest to newest, nothing truncated */}
+      {openHistoryId && (() => {
+        const s = students.find(x => x.id === openHistoryId);
+        if (!s) return null;
+        const c = getColor(s.id);
+        const rows = [...(s.history || [])].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id - b.id));
+        return (
+          <Sheet onClose={() => setOpenHistoryId(null)} className="history-modal">
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: c.accent, flexShrink: 0 }} />
+              <div style={{ fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name} · история</div>
+              <button className="iBtn" onClick={() => setOpenHistoryId(null)} style={{ fontSize: 16 }}>✕</button>
+            </div>
+            {rows.length === 0 ? (
+              <div style={{ fontSize: 14, color: "var(--text-faint)", padding: "12px 0" }}>Пока нет записей</div>
+            ) : (
+              <div className="history-list">
+                {rows.map(ev => (
+                  <div key={ev.id} className="history-row">
+                    <span style={{ fontSize: 14, marginTop: 1 }}>{ev.type === "payment" ? "💰" : "✓"}</span>
+                    <span style={{ fontSize: 12, color: "var(--text-dim)", fontFamily: "'JetBrains Mono', monospace", width: 42, flexShrink: 0, marginTop: 2 }}>{formatDate(ev.date)}</span>
+                    <span style={{ fontSize: 14, color: "var(--text-mid)", flex: 1, minWidth: 0 }}>
+                      {ev.type === "payment" ? `Оплата: +${ev.amount} занятий` : "Занятие прошло (−1)"}
+                      {ev.type === "lesson" && ev.note && (
+                        <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }}>«{ev.note}»</div>
+                      )}
+                    </span>
+                    <button onClick={() => deleteHistoryEvent(s.id, ev.id)} title="Удалить запись и откатить баланс" className="iBtn del" style={{ fontSize: 13, flexShrink: 0 }}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Sheet>
+        );
+      })()}
 
       {showAdd ? (
         <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "15px", marginTop: 6, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
@@ -1535,6 +1968,10 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
               <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Оплачено занятий</div>
               <input className="edit-inp" type="number" style={{ width: 70 }} value={af.lessonsPaid} onChange={e => setAf(f => ({ ...f, lessonsPaid: e.target.value }))} />
             </div>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Начали заниматься</div>
+              <input className="edit-inp" type="date" style={{ width: 148 }} value={af.startDate} onChange={e => setAf(f => ({ ...f, startDate: e.target.value }))} />
+            </div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}>
             <div>
@@ -1552,16 +1989,26 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
               </div>
             )}
             <div>
-              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Контакт родителя</div>
-              <input className="edit-inp" style={{ width: 160 }} placeholder="@username / +7..." value={af.parentContact} onChange={e => setAf(f => ({ ...f, parentContact: e.target.value }))} />
-            </div>
-            <div>
               <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Цвет</div>
               <div style={{ display: "flex", gap: 5 }}>
                 {PALETTE.map((c, i) => (
                   <button key={i} onClick={() => setAf(f => ({ ...f, colorIdx: i }))} style={{ width: 20, height: 20, borderRadius: "50%", background: c.accent, border: af.colorIdx === i ? "2px solid var(--text)" : "2px solid transparent", cursor: "pointer", padding: 0 }} />
                 ))}
               </div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Контакт ученика</div>
+              <input className="edit-inp" style={{ width: 160 }} placeholder="@username / +7..." value={af.studentContact} onChange={e => setAf(f => ({ ...f, studentContact: e.target.value }))} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Имя родителя</div>
+              <input className="edit-inp" style={{ width: 130 }} placeholder="Ирина" value={af.parentName} onChange={e => setAf(f => ({ ...f, parentName: e.target.value }))} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Контакт родителя</div>
+              <input className="edit-inp" style={{ width: 160 }} placeholder="@username / +7..." value={af.parentContact} onChange={e => setAf(f => ({ ...f, parentContact: e.target.value }))} />
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -1587,7 +2034,8 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{s.name} <span style={{ fontSize: 11, color: "var(--text-dim)", fontWeight: 400 }}>{s.subject}</span></div>
                   <div style={{ fontSize: 11, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
-                    {lessonsDone} занятий · LTV {ltv.toLocaleString()} ₽
+                    {lessonsDone} занятий · {s.startDate ? "~" : ""}LTV {ltv.toLocaleString()} ₽
+                    {s.startDate && ` · ${formatDate(s.startDate)}–${s.endDate ? formatDate(s.endDate) : "?"}`}
                   </div>
                 </div>
                 <button onClick={() => unarchiveStudent(s.id)} style={{ fontSize: 11, background: "var(--surface)", border: "1px solid var(--border2)", color: "var(--text-mid)", borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
@@ -1599,6 +2047,259 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// A small dropdown pill (due date / priority / project pickers in the planner's
+// add-task bar). Closes on outside click; `extra` renders below the option list
+// for the due-date picker's custom date input.
+function PillDropdown({ renderValue, options, onChange, extra }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("touchstart", onDoc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("touchstart", onDoc);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button type="button" className="dur-pill" onClick={() => setOpen(o => !o)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 11px" }}>
+        {renderValue()} <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.16)", zIndex: 60, minWidth: 170, padding: 4 }}>
+          {options.map(opt => (
+            <button key={String(opt.value)} type="button" onClick={() => { onChange(opt.value); setOpen(false); }}
+              style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "none", border: "none", padding: "7px 10px", borderRadius: 6, cursor: "pointer", fontSize: 13, fontFamily: "'Manrope', sans-serif", color: "var(--text)" }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--surface2)"}
+              onMouseLeave={e => e.currentTarget.style.background = "none"}
+            >
+              {opt.icon}{opt.label}
+            </button>
+          ))}
+          {extra && <div style={{ padding: "4px 6px" }}>{extra}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskRow({ task, project, onToggle, onDelete, onEdit }) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(task.title);
+  const today = isoDate(new Date());
+  const overdue = !task.done && task.dueDate && task.dueDate < today;
+
+  const save = () => {
+    onEdit(task.id, { title: title.trim() || task.title });
+    setEditing(false);
+  };
+
+  return (
+    <div className="task-row" style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", borderBottom: "1px solid var(--border)" }}>
+      <button onClick={() => onToggle(task.id)} title="Отметить выполненной"
+        style={{ width: 21, height: 21, borderRadius: "50%", border: `2px solid ${task.done ? "#16a34a" : "var(--border2)"}`, background: task.done ? "#16a34a" : "none", flexShrink: 0, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 11, padding: 0 }}
+      >
+        {task.done && "✓"}
+      </button>
+      {editing ? (
+        <input
+          className="edit-inp" autoFocus value={title} onChange={e => setTitle(e.target.value)}
+          onBlur={save} onKeyDown={e => e.key === "Enter" && e.currentTarget.blur()}
+          style={{ flex: 1, fontSize: 14, minWidth: 0 }}
+        />
+      ) : (
+        <span onClick={() => setEditing(true)} style={{ flex: 1, minWidth: 0, fontSize: 14, textDecoration: task.done ? "line-through" : "none", color: task.done ? "var(--text-faint)" : "var(--text)", cursor: "text", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {task.title}
+        </span>
+      )}
+      {task.priority > 0 && <span title={PRIORITY_LABELS[task.priority]} style={{ width: 8, height: 8, borderRadius: "50%", background: PRIORITY_COLORS[task.priority], flexShrink: 0 }} />}
+      {task.dueDate && <span style={{ fontSize: 11, color: overdue ? "#dc2626" : "var(--text-dim)", fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>{formatDate(task.dueDate)}</span>}
+      {project && <span style={{ fontSize: 10, color: project.color, background: project.color + "1e", padding: "2px 7px", borderRadius: 8, flexShrink: 0, whiteSpace: "nowrap" }}>{project.name}</span>}
+      <button className="iBtn del" onClick={() => onDelete(task.id)} title="Удалить">✕</button>
+    </div>
+  );
+}
+
+function PlannerTab({ tasks, projects, addTask, updateTask, toggleTaskDone, deleteTask, addProject, deleteProject }) {
+  const [activeList, setActiveList] = useState("inbox");
+  const [newTitle, setNewTitle] = useState("");
+  const [newDue, setNewDue] = useState({ mode: "none", date: "" });
+  const [newPriority, setNewPriority] = useState(0);
+  const [newProjectId, setNewProjectId] = useState(null);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("manual");
+  const [showAddProject, setShowAddProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+
+  const bucketOf = (t) => {
+    if (t.done) return "completed";
+    const today = isoDate(new Date());
+    if (t.dueDate === today) return "today";
+    if (t.dueDate && t.dueDate > today) return "upcoming";
+    if (t.list === "someday") return "someday";
+    if (t.list === "anytime") return "anytime";
+    return "inbox";
+  };
+
+  const counts = {};
+  tasks.forEach(t => { const b = bucketOf(t); counts[b] = (counts[b] || 0) + 1; });
+
+  const isProjectView = activeList.startsWith("project-");
+  const activeProjectId = isProjectView ? parseInt(activeList.slice(8)) : null;
+
+  let visible = isProjectView
+    ? tasks.filter(t => t.projectId === activeProjectId && !t.done)
+    : tasks.filter(t => bucketOf(t) === activeList);
+
+  if (search.trim()) {
+    const q = search.trim().toLowerCase();
+    visible = visible.filter(t => t.title.toLowerCase().includes(q));
+  }
+  visible = [...visible].sort((a, b) => {
+    if (sortBy === "due") return (a.dueDate || "9999-99-99").localeCompare(b.dueDate || "9999-99-99");
+    if (sortBy === "priority") return b.priority - a.priority;
+    return a.id - b.id;
+  });
+
+  const currentLabel = isProjectView
+    ? (projects.find(p => p.id === activeProjectId)?.name || "Проект")
+    : (SMART_LISTS.find(l => l.key === activeList)?.label || "");
+
+  const submitTask = () => {
+    if (!newTitle.trim()) return;
+    let dueDate = null, list = "inbox";
+    if (newDue.mode === "today") dueDate = isoDate(new Date());
+    else if (newDue.mode === "tomorrow") dueDate = isoDate(addDays(new Date(), 1));
+    else if (newDue.mode === "date" && newDue.date) dueDate = newDue.date;
+    else if (newDue.mode === "someday") list = "someday";
+    if (isProjectView && !newProjectId) {
+      addTask({ title: newTitle.trim(), dueDate, priority: newPriority, projectId: activeProjectId, list: dueDate ? list : "anytime" });
+    } else {
+      if (newProjectId && list === "inbox" && !dueDate) list = "anytime";
+      addTask({ title: newTitle.trim(), dueDate, priority: newPriority, projectId: newProjectId, list });
+    }
+    setNewTitle(""); setNewDue({ mode: "none", date: "" }); setNewPriority(0); setNewProjectId(null);
+  };
+
+  const doAddProject = () => {
+    if (!newProjectName.trim()) return;
+    const id = addProject(newProjectName.trim());
+    setNewProjectName(""); setShowAddProject(false);
+    setActiveList(`project-${id}`);
+  };
+
+  const dueDateLabel = newDue.mode === "none" ? "Без срока" : newDue.mode === "today" ? "Сегодня" : newDue.mode === "tomorrow" ? "Завтра" : newDue.mode === "someday" ? "Когда-нибудь" : newDue.date ? formatDate(newDue.date) : "Без срока";
+  const projectLabel = newProjectId ? (projects.find(p => p.id === newProjectId)?.name || "Проект") : "Без проекта";
+
+  return (
+    <div className="planner-root" style={{ display: "flex", height: "calc(100vh - 62px)" }}>
+      {/* Sidebar: smart lists + projects */}
+      <div className="planner-sidebar no-scrollbar" style={{ width: 240, flexShrink: 0, borderRight: "1px solid var(--border)", background: "var(--surface)", overflowY: "auto", padding: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--surface2)", borderRadius: 8, marginBottom: 14 }}>
+          <span style={{ width: 22, height: 22, borderRadius: "50%", background: "#2563eb", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>✓</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 700 }}>Мой план</div>
+            <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{tasks.filter(t => !t.done).length} открытых задач</div>
+          </div>
+        </div>
+        {SMART_LISTS.map(l => (
+          <button key={l.key} onClick={() => setActiveList(l.key)}
+            style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: activeList === l.key ? "var(--bg)" : "none", border: activeList === l.key ? "1px solid var(--border2)" : "1px solid transparent", borderRadius: 7, padding: "8px 9px", marginBottom: 2, cursor: "pointer", fontSize: 13, fontFamily: "'Manrope', sans-serif", color: activeList === l.key ? "var(--text)" : "var(--text-mid)", fontWeight: activeList === l.key ? 600 : 500 }}>
+            <span>{l.icon}</span><span style={{ flex: 1 }}>{l.label}</span>
+            {counts[l.key] > 0 && <span style={{ fontSize: 11, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace" }}>{counts[l.key]}</span>}
+          </button>
+        ))}
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 18, marginBottom: 6, padding: "0 9px" }}>
+          <span style={{ fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Проекты</span>
+          <button className="iBtn" onClick={() => setShowAddProject(v => !v)} style={{ fontSize: 14 }}>+</button>
+        </div>
+        {showAddProject && (
+          <div style={{ display: "flex", gap: 4, padding: "0 9px", marginBottom: 8 }}>
+            <input className="edit-inp" autoFocus placeholder="Название" style={{ flex: 1, fontSize: 12, padding: "5px 8px" }} value={newProjectName} onChange={e => setNewProjectName(e.target.value)} onKeyDown={e => e.key === "Enter" && doAddProject()} />
+            <button className="save-btn" style={{ padding: "5px 9px", fontSize: 11 }} onClick={doAddProject}>✓</button>
+          </div>
+        )}
+        {projects.map(p => {
+          const count = tasks.filter(t => t.projectId === p.id && !t.done).length;
+          const key = `project-${p.id}`;
+          return (
+            <div key={p.id} style={{ display: "flex", alignItems: "center" }}>
+              <button onClick={() => setActiveList(key)}
+                style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0, textAlign: "left", background: activeList === key ? "var(--bg)" : "none", border: activeList === key ? "1px solid var(--border2)" : "1px solid transparent", borderRadius: 7, padding: "8px 9px", marginBottom: 2, cursor: "pointer", fontSize: 13, fontFamily: "'Manrope', sans-serif", color: activeList === key ? "var(--text)" : "var(--text-mid)", fontWeight: activeList === key ? 600 : 500 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color, flexShrink: 0 }} />
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                {count > 0 && <span style={{ fontSize: 11, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace" }}>{count}</span>}
+              </button>
+              <button className="iBtn del" title="Удалить проект" onClick={() => deleteProject(p.id)} style={{ fontSize: 11, flexShrink: 0 }}>✕</button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Main panel */}
+      <div style={{ flex: 1, minWidth: 0, overflow: "auto", padding: "24px 28px" }}>
+        <div style={{ fontSize: 10, color: "#2563eb", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>{isProjectView ? "Проект" : "Умный список"}</div>
+        <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 4 }}>{currentLabel}</div>
+        <div style={{ fontSize: 13, color: "var(--text-dim)", marginBottom: 18 }}>{visible.length} {visible.length === 1 ? "задача" : "задач"}</div>
+
+        {/* Add task bar */}
+        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: 14, marginBottom: 18 }}>
+          <input className="edit-inp" placeholder="Добавить задачу..." style={{ width: "100%", fontSize: 15, padding: "9px 4px", border: "none", marginBottom: 10 }} value={newTitle} onChange={e => setNewTitle(e.target.value)} onKeyDown={e => e.key === "Enter" && submitTask()} />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <PillDropdown
+              renderValue={() => `📅 ${dueDateLabel}`}
+              options={[{ value: "none", label: "Без срока" }, { value: "today", label: "Сегодня" }, { value: "tomorrow", label: "Завтра" }, { value: "someday", label: "Когда-нибудь" }]}
+              onChange={(v) => setNewDue({ mode: v, date: "" })}
+              extra={<input type="date" className="edit-inp" style={{ width: "100%", fontSize: 12 }} value={newDue.mode === "date" ? newDue.date : ""} onChange={e => setNewDue({ mode: "date", date: e.target.value })} />}
+            />
+            <PillDropdown
+              renderValue={() => `🚩 ${PRIORITY_LABELS[newPriority]}`}
+              options={[0, 1, 2, 3].map(v => ({ value: v, label: PRIORITY_LABELS[v] }))}
+              onChange={setNewPriority}
+            />
+            <PillDropdown
+              renderValue={() => `📁 ${projectLabel}`}
+              options={[{ value: null, label: "Без проекта" }, ...projects.map(p => ({ value: p.id, label: p.name }))]}
+              onChange={setNewProjectId}
+            />
+            <button className="save-btn" style={{ marginLeft: "auto", opacity: newTitle.trim() ? 1 : 0.5 }} onClick={submitTask}>Добавить</button>
+          </div>
+        </div>
+
+        {/* Search + sort */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+          <input className="edit-inp" placeholder="🔍 Поиск" style={{ flex: 1, minWidth: 120, fontSize: 13 }} value={search} onChange={e => setSearch(e.target.value)} />
+          <select className="edit-inp" value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ fontSize: 12 }}>
+            <option value="manual">Мой порядок</option>
+            <option value="due">По сроку</option>
+            <option value="priority">По приоритету</option>
+          </select>
+        </div>
+
+        {visible.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 0", color: "var(--text-faint)" }}>
+            <div style={{ fontSize: 40, marginBottom: 10 }}>✓</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-mid)", marginBottom: 4 }}>Задач пока нет</div>
+            <div style={{ fontSize: 13 }}>Добавьте задачу сверху или выберите другой список.</div>
+          </div>
+        ) : (
+          <div>
+            {visible.map(t => (
+              <TaskRow key={t.id} task={t} project={projects.find(p => p.id === t.projectId)} onToggle={toggleTaskDone} onDelete={deleteTask} onEdit={updateTask} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
