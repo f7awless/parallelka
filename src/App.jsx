@@ -170,12 +170,32 @@ function parseImportStatus(raw) {
   return { active: true, archived: false };
 }
 
+// "89365550141 (Paladinlightnin)" → phone + telegram; either half (or both)
+// may be missing, and a bare "-" placeholder counts as missing.
+function splitPhoneTelegram(raw) {
+  const s = String(raw || "").trim();
+  if (!s || s === "-" || s === "—") return { phone: "", telegram: "" };
+  const m = s.match(/^([^(]*)\(([^)]*)\)?\s*$/);
+  if (m) {
+    const phone = m[1].trim();
+    let tg = m[2].trim();
+    if (tg && !tg.startsWith("@")) tg = "@" + tg;
+    return { phone, telegram: tg };
+  }
+  if (/^[+\d][\d\s\-()]{4,}$/.test(s)) return { phone: s, telegram: "" };
+  return { phone: "", telegram: s.startsWith("@") ? s : "@" + s };
+}
+
 const IMPORT_FIELDS = [
   { key: "ignore", label: "— игнорировать —" },
   { key: "name", label: "Имя ученика" },
-  { key: "studentContact", label: "Контакт ученика" },
+  { key: "studentContactCombo", label: "Контакт ученика (тел. + тг вместе)" },
+  { key: "studentPhone", label: "Телефон ученика" },
+  { key: "studentTelegram", label: "Телеграм ученика" },
   { key: "parentName", label: "Имя родителя" },
-  { key: "parentContact", label: "Контакт родителя" },
+  { key: "parentContactCombo", label: "Контакт родителя (тел. + тг вместе)" },
+  { key: "parentPhone", label: "Телефон родителя" },
+  { key: "parentTelegram", label: "Телеграм родителя" },
   { key: "subject", label: "Предмет (текст)" },
   { key: "formatGrade", label: "Формат + класс (напр. «ЕГЭ 11»)" },
   { key: "grade", label: "Класс (только число)" },
@@ -1875,7 +1895,7 @@ const Field = ({ label, children }) => (
 );
 
 function buildStudentFromRow(row, mapping) {
-  const out = { name: "", subject: "", grade: "", workFormat: "", rate: 3000, weeklyHours: 2, sessionDuration: 1, lessonsPaid: 0, paymentMode: "subscription", lessonsPerBundle: 4, studentContact: "", parentName: "", parentContact: "", notes: "", startDate: "", endDate: "", active: true, archived: false, colorIdx: null };
+  const out = { name: "", subject: "", grade: "", workFormat: "", rate: 3000, weeklyHours: 2, sessionDuration: 1, lessonsPaid: 0, paymentMode: "subscription", lessonsPerBundle: 4, studentPhone: "", studentTelegram: "", parentName: "", parentPhone: "", parentTelegram: "", notes: "", startDate: "", endDate: "", active: true, archived: false, colorIdx: null };
   Object.entries(mapping).forEach(([colIdx, field]) => {
     if (field === "ignore") return;
     const raw = row[colIdx];
@@ -1887,6 +1907,8 @@ function buildStudentFromRow(row, mapping) {
       case "endDate": out.endDate = parseImportDate(raw); break;
       case "formatGrade": { const { workFormat, grade } = splitFormatGrade(raw); if (workFormat) out.workFormat = workFormat; if (grade) out.grade = grade; break; }
       case "status": { const { active, archived } = parseImportStatus(raw); out.active = active; out.archived = archived; break; }
+      case "studentContactCombo": { const { phone, telegram } = splitPhoneTelegram(raw); if (phone) out.studentPhone = phone; if (telegram) out.studentTelegram = telegram; break; }
+      case "parentContactCombo": { const { phone, telegram } = splitPhoneTelegram(raw); if (phone) out.parentPhone = phone; if (telegram) out.parentTelegram = telegram; break; }
       default: out[field] = String(raw).trim();
     }
   });
@@ -1923,7 +1945,7 @@ function ImportStudentsModal({ onClose, onImport }) {
         const label = String(headers[i] || "").toLowerCase();
         let field = "ignore";
         if (label.includes("имя") || label.includes("ученик")) field = used.has("name") ? "parentName" : "name";
-        else if (label.includes("контакт")) field = used.has("studentContact") ? "parentContact" : "studentContact";
+        else if (label.includes("контакт")) field = used.has("studentContactCombo") ? "parentContactCombo" : "studentContactCombo";
         else if (label.includes("предмет")) field = "formatGrade";
         else if (label.includes("статус")) field = "status";
         else if (label.includes("начал")) field = "startDate";
@@ -2017,11 +2039,11 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
   const [ef, setEf] = useState({});
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [af, setAf] = useState({ name: "", subject: "", grade: "", workFormat: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentContact: "", parentName: "", parentContact: "", colorIdx: null, startDate: isoDate(new Date()) });
+  const [af, setAf] = useState({ name: "", subject: "", grade: "", workFormat: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentPhone: "", studentTelegram: "", parentName: "", parentPhone: "", parentTelegram: "", colorIdx: null, startDate: isoDate(new Date()) });
 
   const startEdit = (s) => {
     setEditId(s.id);
-    setEf({ name: s.name, subject: s.subject, grade: s.grade || "", workFormat: s.workFormat || "", rate: String(s.rate), weeklyHours: String(s.weeklyHours), sessionDuration: s.sessionDuration, paymentMode: s.paymentMode || "subscription", lessonsPerBundle: String(s.lessonsPerBundle ?? 4), studentContact: s.studentContact || "", parentName: s.parentName || "", parentContact: s.parentContact || "", colorIdx: s.colorIdx ?? null, startDate: s.startDate || "", endDate: s.endDate || "" });
+    setEf({ name: s.name, subject: s.subject, grade: s.grade || "", workFormat: s.workFormat || "", rate: String(s.rate), weeklyHours: String(s.weeklyHours), sessionDuration: s.sessionDuration, paymentMode: s.paymentMode || "subscription", lessonsPerBundle: String(s.lessonsPerBundle ?? 4), studentPhone: s.studentPhone || "", studentTelegram: s.studentTelegram || "", parentName: s.parentName || "", parentPhone: s.parentPhone || "", parentTelegram: s.parentTelegram || "", colorIdx: s.colorIdx ?? null, startDate: s.startDate || "", endDate: s.endDate || "" });
   };
   const saveEdit = (id) => {
     updateStudent(id, {
@@ -2034,9 +2056,11 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
       sessionDuration: ef.sessionDuration,
       paymentMode: ef.paymentMode,
       lessonsPerBundle: parseInt(ef.lessonsPerBundle) || 4,
-      studentContact: ef.studentContact.trim(),
+      studentPhone: ef.studentPhone.trim(),
+      studentTelegram: ef.studentTelegram.trim(),
       parentName: ef.parentName.trim(),
-      parentContact: ef.parentContact.trim(),
+      parentPhone: ef.parentPhone.trim(),
+      parentTelegram: ef.parentTelegram.trim(),
       colorIdx: ef.colorIdx,
       startDate: ef.startDate || "",
       endDate: ef.endDate || "",
@@ -2049,10 +2073,10 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
       name: af.name.trim(), subject: af.subject.trim() || "Химия", grade: af.grade.trim(), workFormat: af.workFormat, rate: parseInt(af.rate) || 3000,
       weeklyHours: parseFloat(af.weeklyHours) || 2, sessionDuration: af.sessionDuration,
       lessonsPaid: parseInt(af.lessonsPaid) || 0, paymentMode: af.paymentMode,
-      lessonsPerBundle: parseInt(af.lessonsPerBundle) || 4, studentContact: af.studentContact.trim(), parentName: af.parentName.trim(), parentContact: af.parentContact.trim(), notes: "",
+      lessonsPerBundle: parseInt(af.lessonsPerBundle) || 4, studentPhone: af.studentPhone.trim(), studentTelegram: af.studentTelegram.trim(), parentName: af.parentName.trim(), parentPhone: af.parentPhone.trim(), parentTelegram: af.parentTelegram.trim(), notes: "",
       colorIdx: af.colorIdx, startDate: af.startDate,
     });
-    setAf({ name: "", subject: "", grade: "", workFormat: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentContact: "", parentName: "", parentContact: "", colorIdx: null, startDate: isoDate(new Date()) });
+    setAf({ name: "", subject: "", grade: "", workFormat: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentPhone: "", studentTelegram: "", parentName: "", parentPhone: "", parentTelegram: "", colorIdx: null, startDate: isoDate(new Date()) });
     setShowAdd(false);
   };
 
@@ -2128,9 +2152,13 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                   </Field>
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-                  <Field label="Контакт ученика"><input className="edit-inp" style={{ width: 160 }} placeholder="@username / +7..." value={ef.studentContact} onChange={e => setEf(f => ({ ...f, studentContact: e.target.value }))} /></Field>
+                  <Field label="Телефон ученика"><input className="edit-inp" style={{ width: 130 }} placeholder="+7..." value={ef.studentPhone} onChange={e => setEf(f => ({ ...f, studentPhone: e.target.value }))} /></Field>
+                  <Field label="Телеграм ученика"><input className="edit-inp" style={{ width: 130 }} placeholder="@username" value={ef.studentTelegram} onChange={e => setEf(f => ({ ...f, studentTelegram: e.target.value }))} /></Field>
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
                   <Field label="Имя родителя"><input className="edit-inp" style={{ width: 130 }} placeholder="Ирина" value={ef.parentName} onChange={e => setEf(f => ({ ...f, parentName: e.target.value }))} /></Field>
-                  <Field label="Контакт родителя"><input className="edit-inp" style={{ width: 160 }} placeholder="@username / +7..." value={ef.parentContact} onChange={e => setEf(f => ({ ...f, parentContact: e.target.value }))} /></Field>
+                  <Field label="Телефон родителя"><input className="edit-inp" style={{ width: 130 }} placeholder="+7..." value={ef.parentPhone} onChange={e => setEf(f => ({ ...f, parentPhone: e.target.value }))} /></Field>
+                  <Field label="Телеграм родителя"><input className="edit-inp" style={{ width: 130 }} placeholder="@username" value={ef.parentTelegram} onChange={e => setEf(f => ({ ...f, parentTelegram: e.target.value }))} /></Field>
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <button className="save-btn" onClick={() => saveEdit(s.id)}>Сохранить</button>
@@ -2171,31 +2199,35 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                 <button className="iBtn del" title="Удалить навсегда" onClick={() => { if (window.confirm(`Удалить ${s.name} без возможности восстановить?`)) deleteStudent(s.id); }}>✕</button>
               </div>
 
-              {/* Contacts — separate line: the student's own contact, and the parent's name + contact */}
-              {(s.studentContact || s.parentName || s.parentContact) && (
+              {/* Contacts — separate line: student's phone/telegram, then parent's name + phone/telegram */}
+              {(s.studentPhone || s.studentTelegram || s.parentName || s.parentPhone || s.parentTelegram) && (
                 <div style={{ paddingLeft: 54, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {s.studentContact && (
-                    <button
-                      onClick={() => openContact(s.studentContact)}
-                      title={`Написать ученику: ${s.studentContact}`}
-                      className="inline-form-btn"
-                      style={{ fontSize: 11, color: "var(--text-mid)", background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
-                    >
-                      🎓 {s.studentContact}
+                  {s.studentPhone && (
+                    <button onClick={() => openContact(s.studentPhone)} title={`Позвонить ученику: ${s.studentPhone}`} className="inline-form-btn"
+                      style={{ fontSize: 11, color: "var(--text-mid)", background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
+                      🎓 📞 {s.studentPhone}
                     </button>
                   )}
-                  {s.parentContact && (
-                    <button
-                      onClick={() => openContact(s.parentContact)}
-                      title={`Написать родителю: ${s.parentContact}`}
-                      className="inline-form-btn"
-                      style={{ fontSize: 11, color: "#2563eb", background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
-                    >
-                      👪 {s.parentName ? `${s.parentName}: ` : ""}{s.parentContact}
+                  {s.studentTelegram && (
+                    <button onClick={() => openContact(s.studentTelegram)} title={`Написать ученику: ${s.studentTelegram}`} className="inline-form-btn"
+                      style={{ fontSize: 11, color: "var(--text-mid)", background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
+                      🎓 💬 {s.studentTelegram}
                     </button>
                   )}
-                  {!s.parentContact && s.parentName && (
+                  {s.parentName && !s.parentPhone && !s.parentTelegram && (
                     <span style={{ fontSize: 11, color: "var(--text-faint)", padding: "3px 9px" }}>👪 {s.parentName}</span>
+                  )}
+                  {s.parentPhone && (
+                    <button onClick={() => openContact(s.parentPhone)} title={`Позвонить родителю: ${s.parentPhone}`} className="inline-form-btn"
+                      style={{ fontSize: 11, color: "#2563eb", background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
+                      👪 📞 {s.parentName ? `${s.parentName}: ` : ""}{s.parentPhone}
+                    </button>
+                  )}
+                  {s.parentTelegram && (
+                    <button onClick={() => openContact(s.parentTelegram)} title={`Написать родителю: ${s.parentTelegram}`} className="inline-form-btn"
+                      style={{ fontSize: 11, color: "#2563eb", background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
+                      👪 💬 {!s.parentPhone && s.parentName ? `${s.parentName}: ` : ""}{s.parentTelegram}
+                    </button>
                   )}
                 </div>
               )}
@@ -2378,16 +2410,24 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}>
             <div>
-              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Контакт ученика</div>
-              <input className="edit-inp" style={{ width: 160 }} placeholder="@username / +7..." value={af.studentContact} onChange={e => setAf(f => ({ ...f, studentContact: e.target.value }))} />
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Телефон ученика</div>
+              <input className="edit-inp" style={{ width: 130 }} placeholder="+7..." value={af.studentPhone} onChange={e => setAf(f => ({ ...f, studentPhone: e.target.value }))} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Телеграм ученика</div>
+              <input className="edit-inp" style={{ width: 130 }} placeholder="@username" value={af.studentTelegram} onChange={e => setAf(f => ({ ...f, studentTelegram: e.target.value }))} />
             </div>
             <div>
               <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Имя родителя</div>
               <input className="edit-inp" style={{ width: 130 }} placeholder="Ирина" value={af.parentName} onChange={e => setAf(f => ({ ...f, parentName: e.target.value }))} />
             </div>
             <div>
-              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Контакт родителя</div>
-              <input className="edit-inp" style={{ width: 160 }} placeholder="@username / +7..." value={af.parentContact} onChange={e => setAf(f => ({ ...f, parentContact: e.target.value }))} />
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Телефон родителя</div>
+              <input className="edit-inp" style={{ width: 130 }} placeholder="+7..." value={af.parentPhone} onChange={e => setAf(f => ({ ...f, parentPhone: e.target.value }))} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Телеграм родителя</div>
+              <input className="edit-inp" style={{ width: 130 }} placeholder="@username" value={af.parentTelegram} onChange={e => setAf(f => ({ ...f, parentTelegram: e.target.value }))} />
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
