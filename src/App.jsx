@@ -556,6 +556,7 @@ function TutorApp() {
   const [examDates, setExamDates] = useState(() => initial.current.examDates || { oge: "", ege: "" });
   const [showSettings, setShowSettings] = useState(false);
   const [darkMode, setDarkMode] = useState(() => initial.current.darkMode || false);
+  const [taxMode, setTaxMode] = useState(() => initial.current.taxMode || "sz"); // "sz" (самозанятый, 4%) | "ip" (ИП УСН 6%)
   const [tasks, setTasks] = useState(() => initial.current.tasks || []);
   const [taskProjects, setTaskProjects] = useState(() => initial.current.taskProjects || [
     { id: 1, name: "Ученики", color: "#d97706" },
@@ -611,6 +612,7 @@ function TutorApp() {
         if (d.taskProjects) setTaskProjects(d.taskProjects);
         if (d.nextTaskId) setNextTaskId(d.nextTaskId);
         if (d.nextProjectId) setNextProjectId(d.nextProjectId);
+        if (d.taxMode) setTaxMode(d.taxMode);
       }
       hydratedRef.current = true;
       setCloudReady(true);
@@ -622,7 +624,7 @@ function TutorApp() {
   useEffect(() => {
     const snapshot = {
       students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode,
-      appMode, tasks, taskProjects, nextTaskId, nextProjectId,
+      appMode, tasks, taskProjects, nextTaskId, nextProjectId, taxMode,
     };
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot)); } catch {}
 
@@ -634,7 +636,7 @@ function TutorApp() {
         .then(({ error }) => { if (error) console.error("Supabase sync error:", error); });
     }, 800);
     return () => clearTimeout(syncTimerRef.current);
-  }, [students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode, appMode, tasks, taskProjects, nextTaskId, nextProjectId, cloudReady, user?.id, supabase]);
+  }, [students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode, appMode, tasks, taskProjects, nextTaskId, nextProjectId, taxMode, cloudReady, user?.id, supabase]);
 
   // Task CRUD for the planner
   const addTask = (data) => { setTasks(prev => [...prev, { id: nextTaskId, done: false, doneAt: null, dueDate: null, priority: 0, projectId: null, list: "inbox", notes: "", createdAt: isoDate(new Date()), ...data }]); setNextTaskId(n => n + 1); };
@@ -729,8 +731,17 @@ function TutorApp() {
       }
     });
 
-    return { earned, planned };
-  }, [students, sessions]);
+    // Самозанятый: 4% при работе с физлицами — точная сумма за месяц (НПД
+    // платится помесячно с фактических поступлений). ИП на УСН «доходы»: 6%,
+    // но это без учёта фиксированных страховых взносов за себя (~57 390 ₽/год +
+    // 1% с дохода свыше 300 000 ₽/год) — их можно полностью вычесть из налога,
+    // но т.к. это годовая, а не помесячная сумма, здесь показываем налог без
+    // вычета и отдельно предупреждаем об этом в интерфейсе.
+    const taxRate = taxMode === "ip" ? 0.06 : 0.04;
+    const tax = Math.round(earned * taxRate);
+
+    return { earned, planned, tax, taxRate };
+  }, [students, sessions, taxMode]);
 
   const updateStudent = (id, ch) => setStudents(prev => prev.map(s => s.id === id ? { ...s, ...ch } : s));
   const addStudent = (data) => { setStudents(prev => [...prev, { id: nextId, ...data, active: true }]); setNextId(n => n + 1); };
@@ -877,6 +888,18 @@ function TutorApp() {
           <div style={{ marginBottom: 16 }}>
             <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Дата ЕГЭ</div>
             <input className="edit-inp" type="date" style={{ width: "100%", fontSize: 14, padding: "9px 10px" }} value={examDates.ege} onChange={e => setExamDate("ege", e.target.value)} />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Налоговый режим</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button className={`dur-pill ${taxMode === "sz" ? "sel" : ""}`} style={{ flex: 1 }} onClick={() => setTaxMode("sz")}>Самозанятый (4%)</button>
+              <button className={`dur-pill ${taxMode === "ip" ? "sel" : ""}`} style={{ flex: 1 }} onClick={() => setTaxMode("ip")}>ИП, УСН (6%)</button>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 6, lineHeight: 1.4 }}>
+              {taxMode === "sz"
+                ? "Ставка для работы с физлицами (родители/ученики). С юрлицами — 6%."
+                : "Без учёта фиксированных страховых взносов за себя (~57 390 ₽/год + 1% с дохода свыше 300 000 ₽) — их можно вычесть из налога УСН, но это годовая сумма, посчитать точно по месяцу нельзя."}
+            </div>
           </div>
           <button className="save-btn" style={{ width: "100%" }} onClick={() => setShowSettings(false)}>Готово</button>
         </Sheet>
@@ -1816,6 +1839,10 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
           <div style={{ flex: 1, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px" }}>
             <div style={{ fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 4 }}>План на месяц</div>
             <div style={{ fontSize: 20, fontWeight: 800, color: "var(--text)", fontFamily: "'JetBrains Mono', monospace" }}>{monthlyStats.planned.toLocaleString()} ₽</div>
+          </div>
+          <div style={{ flex: 1, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 4 }}>Налог ({monthlyStats.taxRate * 100}%)</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#dc2626", fontFamily: "'JetBrains Mono', monospace" }}>{monthlyStats.tax.toLocaleString()} ₽</div>
           </div>
         </div>
       )}
