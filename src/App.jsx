@@ -134,6 +134,60 @@ function weekdayOccurrencesInMonth(year, month, dayIdx) {
   return count;
 }
 
+// Table-import helpers — tolerant parsers for the messy real-world values
+// that show up in a tutor's own spreadsheet (transitions like "3000 => 2250",
+// dates like "7.6.26", a status column in Russian, "ЕГЭ 11" combo cells).
+function parseImportDate(raw) {
+  if (!raw) return "";
+  const s = String(raw).trim();
+  const m = s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})$/);
+  if (m) {
+    let [, d, mo, y] = m;
+    if (y.length === 2) y = (Number(y) < 70 ? "20" : "19") + y;
+    return `${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  const d = new Date(s);
+  return isNaN(d) ? "" : isoDate(d);
+}
+function parseImportNumber(raw) {
+  if (raw === undefined || raw === null) return null;
+  const s = String(raw);
+  const parts = s.split("=>");
+  const last = (parts[parts.length - 1] || "").replace(/[^\d.,-]/g, "").replace(",", ".");
+  const n = parseFloat(last);
+  return isNaN(n) ? null : n;
+}
+function splitFormatGrade(raw) {
+  const s = String(raw || "");
+  const format = WORK_FORMATS.find(f => s.toUpperCase().includes(f));
+  const gradeMatch = s.match(/\d{1,2}/);
+  return { workFormat: format || "", grade: gradeMatch ? gradeMatch[0] : "" };
+}
+function parseImportStatus(raw) {
+  const s = String(raw || "").toLowerCase();
+  if (s.includes("переста")) return { active: false, archived: true };
+  if (s.includes("перерыв")) return { active: false, archived: false };
+  return { active: true, archived: false };
+}
+
+const IMPORT_FIELDS = [
+  { key: "ignore", label: "— игнорировать —" },
+  { key: "name", label: "Имя ученика" },
+  { key: "studentContact", label: "Контакт ученика" },
+  { key: "parentName", label: "Имя родителя" },
+  { key: "parentContact", label: "Контакт родителя" },
+  { key: "subject", label: "Предмет (текст)" },
+  { key: "formatGrade", label: "Формат + класс (напр. «ЕГЭ 11»)" },
+  { key: "grade", label: "Класс (только число)" },
+  { key: "workFormat", label: "Формат (ЕГЭ/ОГЭ/ПУ/ВИ)" },
+  { key: "rate", label: "Ставка ₽/ч" },
+  { key: "weeklyHours", label: "Часов в неделю" },
+  { key: "startDate", label: "Дата начала" },
+  { key: "endDate", label: "Дата окончания" },
+  { key: "notes", label: "Заметка" },
+  { key: "status", label: "Статус (учится/перерыв/перестал)" },
+];
+
 function truncate(str, n) {
   if (!str) return str;
   return str.length > n ? str.slice(0, n) + "…" : str;
@@ -751,6 +805,13 @@ function TutorApp() {
 
   const updateStudent = (id, ch) => setStudents(prev => prev.map(s => s.id === id ? { ...s, ...ch } : s));
   const addStudent = (data) => { setStudents(prev => [...prev, { id: nextId, ...data, active: true }]); setNextId(n => n + 1); };
+  // Batch-assigns ids in one go — calling addStudent() in a loop would reuse
+  // the same stale nextId for every row, since setState hasn't flushed yet.
+  const importStudents = (rows) => {
+    const startId = nextId;
+    setStudents(prev => [...prev, ...rows.map((r, i) => ({ id: startId + i, ...r }))]);
+    setNextId(startId + rows.length);
+  };
   const clearSchedule = () => { if (window.confirm("Очистить всё расписание?")) setSessions([]); };
 
   const addLessons = (id, n, date) => {
@@ -1308,7 +1369,7 @@ function TutorApp() {
         <StudentsTab
           students={students} getColor={getColor} getTarget={getTarget} getPlaced={getPlaced}
           toggleActive={toggleActive} deleteStudent={deleteStudent}
-          updateStudent={updateStudent} addStudent={addStudent}
+          updateStudent={updateStudent} addStudent={addStudent} importStudents={importStudents}
           addLessons={addLessons} markLessonDone={markLessonDone} deleteHistoryEvent={deleteHistoryEvent}
           archiveStudent={archiveStudent} unarchiveStudent={unarchiveStudent} getStudentLTV={getStudentLTV}
           monthlyStats={monthlyStats}
@@ -1813,11 +1874,149 @@ const Field = ({ label, children }) => (
   </div>
 );
 
-function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, deleteStudent, updateStudent, addStudent, addLessons, markLessonDone, deleteHistoryEvent, archiveStudent, unarchiveStudent, getStudentLTV, monthlyStats }) {
+function buildStudentFromRow(row, mapping) {
+  const out = { name: "", subject: "", grade: "", workFormat: "", rate: 3000, weeklyHours: 2, sessionDuration: 1, lessonsPaid: 0, paymentMode: "subscription", lessonsPerBundle: 4, studentContact: "", parentName: "", parentContact: "", notes: "", startDate: "", endDate: "", active: true, archived: false, colorIdx: null };
+  Object.entries(mapping).forEach(([colIdx, field]) => {
+    if (field === "ignore") return;
+    const raw = row[colIdx];
+    if (raw === undefined || String(raw).trim() === "") return;
+    switch (field) {
+      case "rate": out.rate = parseImportNumber(raw) ?? out.rate; break;
+      case "weeklyHours": out.weeklyHours = parseImportNumber(raw) ?? out.weeklyHours; break;
+      case "startDate": out.startDate = parseImportDate(raw); break;
+      case "endDate": out.endDate = parseImportDate(raw); break;
+      case "formatGrade": { const { workFormat, grade } = splitFormatGrade(raw); if (workFormat) out.workFormat = workFormat; if (grade) out.grade = grade; break; }
+      case "status": { const { active, archived } = parseImportStatus(raw); out.active = active; out.archived = archived; break; }
+      default: out[field] = String(raw).trim();
+    }
+  });
+  if (!out.subject) out.subject = out.workFormat || "—";
+  return out;
+}
+
+function ImportStudentsModal({ onClose, onImport }) {
+  const [step, setStep] = useState("upload"); // upload | map | preview
+  const [matrix, setMatrix] = useState(null);
+  const [headerRowIdx, setHeaderRowIdx] = useState(0);
+  const [mapping, setMapping] = useState({});
+  const [error, setError] = useState("");
+
+  const handleFile = async (file) => {
+    setError("");
+    try {
+      const XLSX = await import("xlsx");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
+      if (!rows.length) { setError("Файл пустой."); return; }
+      let bestIdx = 0, bestCount = -1;
+      rows.slice(0, 5).forEach((r, i) => {
+        const c = r.filter(v => String(v).trim()).length;
+        if (c > bestCount) { bestCount = c; bestIdx = i; }
+      });
+      const headers = rows[bestIdx] || [];
+      const colCount = Math.max(...rows.slice(0, bestIdx + 3).map(r => r.length), headers.length);
+      const guess = {};
+      const used = new Set();
+      for (let i = 0; i < colCount; i++) {
+        const label = String(headers[i] || "").toLowerCase();
+        let field = "ignore";
+        if (label.includes("имя") || label.includes("ученик")) field = used.has("name") ? "parentName" : "name";
+        else if (label.includes("контакт")) field = used.has("studentContact") ? "parentContact" : "studentContact";
+        else if (label.includes("предмет")) field = "formatGrade";
+        else if (label.includes("статус")) field = "status";
+        else if (label.includes("начал")) field = "startDate";
+        else if (label.includes("конец") || label.includes("оконч")) field = "endDate";
+        else if (label.includes("ставк")) field = "rate";
+        else if (label.includes("час")) field = "weeklyHours";
+        else if (label.includes("коммент") || label.includes("заметк")) field = "notes";
+        if (field !== "ignore") used.add(field);
+        guess[i] = field;
+      }
+      setMatrix(rows);
+      setHeaderRowIdx(bestIdx);
+      setMapping(guess);
+      setStep("map");
+    } catch (e) {
+      setError("Не получилось прочитать файл. Сохрани таблицу как .xlsx или .csv и попробуй снова.");
+    }
+  };
+
+  const headers = matrix ? (matrix[headerRowIdx] || []) : [];
+  const colCount = matrix ? Math.max(...matrix.slice(0, headerRowIdx + 3).map(r => r.length), headers.length) : 0;
+  const dataRows = matrix ? matrix.slice(headerRowIdx + 1).filter(r => r.some(v => String(v).trim())) : [];
+  const parsedStudents = dataRows.map(r => buildStudentFromRow(r, mapping)).filter(s => s.name);
+
+  return (
+    <Sheet onClose={onClose}>
+      <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14 }}>Загрузить учеников из таблицы</div>
+
+      {step === "upload" && (
+        <div>
+          <div style={{ fontSize: 13, color: "var(--text-mid)", marginBottom: 12, lineHeight: 1.5 }}>
+            Загрузи файл .xlsx или .csv (в Google Таблицах: Файл → Скачать → одна из этих двух).
+          </div>
+          <input type="file" accept=".xlsx,.xls,.csv" onChange={e => e.target.files[0] && handleFile(e.target.files[0])} />
+          {error && <div style={{ fontSize: 12, color: "#dc2626", marginTop: 10 }}>{error}</div>}
+        </div>
+      )}
+
+      {step === "map" && matrix && (
+        <div>
+          <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 10 }}>
+            Строка с заголовками: №{headerRowIdx + 1}
+            <button className="iBtn" style={{ marginLeft: 8, fontSize: 11 }} onClick={() => setHeaderRowIdx(i => Math.max(0, i - 1))}>‹</button>
+            <button className="iBtn" style={{ fontSize: 11 }} onClick={() => setHeaderRowIdx(i => i + 1)}>›</button>
+            {" · "}найдено строк с учениками: {dataRows.length}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "40vh", overflowY: "auto" }}>
+            {Array.from({ length: colCount }).map((_, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{headers[i] || `Колонка ${i + 1}`}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dataRows[0]?.[i] || "—"}</div>
+                </div>
+                <select className="edit-inp" style={{ width: 190, flexShrink: 0 }} value={mapping[i] || "ignore"} onChange={e => setMapping(m => ({ ...m, [i]: e.target.value }))}>
+                  {IMPORT_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <button className="cancel-btn-sm" onClick={() => setStep("upload")}>Назад</button>
+            <button className="save-btn" style={{ flex: 1 }} onClick={() => setStep("preview")}>Далее — предпросмотр ({parsedStudents.length})</button>
+          </div>
+        </div>
+      )}
+
+      {step === "preview" && (
+        <div>
+          <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 10 }}>Будет добавлено учеников: {parsedStudents.length}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "45vh", overflowY: "auto" }}>
+            {parsedStudents.map((s, i) => (
+              <div key={i} style={{ fontSize: 12, background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 7, padding: "6px 10px" }}>
+                <b>{s.name}</b> {s.workFormat} {s.grade && `${s.grade} кл.`} · {s.rate}₽/ч · {s.weeklyHours}ч/нед
+                {s.archived && <span style={{ color: "var(--text-faint)" }}> · архив</span>}
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            <button className="cancel-btn-sm" onClick={() => setStep("map")}>Назад</button>
+            <button className="save-btn" style={{ flex: 1 }} onClick={() => { onImport(parsedStudents); onClose(); }}>Импортировать {parsedStudents.length}</button>
+          </div>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, deleteStudent, updateStudent, addStudent, importStudents, addLessons, markLessonDone, deleteHistoryEvent, archiveStudent, unarchiveStudent, getStudentLTV, monthlyStats }) {
   const [editId, setEditId] = useState(null);
   const [openHistoryId, setOpenHistoryId] = useState(null);
   const [ef, setEf] = useState({});
   const [showAdd, setShowAdd] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [af, setAf] = useState({ name: "", subject: "", grade: "", workFormat: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentContact: "", parentName: "", parentContact: "", colorIdx: null, startDate: isoDate(new Date()) });
 
   const startEdit = (s) => {
@@ -2197,8 +2396,12 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
           </div>
         </div>
       ) : (
-        <button className="ghost-btn" onClick={() => setShowAdd(true)} style={{ marginTop: 6 }}>+ Добавить ученика</button>
+        <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <button className="ghost-btn" style={{ flex: 1 }} onClick={() => setShowAdd(true)}>+ Добавить ученика</button>
+          <button className="ghost-btn" style={{ flex: 1 }} onClick={() => setShowImport(true)}>⇪ Загрузить из таблицы</button>
+        </div>
       )}
+      {showImport && <ImportStudentsModal onClose={() => setShowImport(false)} onImport={importStudents} />}
 
       {/* Archive section */}
       {students.filter(s => s.archived).length > 0 && (
