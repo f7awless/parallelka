@@ -120,6 +120,19 @@ function weeksBetween(startIso, endIso) {
   return Math.max(0, days / 7);
 }
 
+// Counts how many times a given weekday (0=Пн … 6=Вс, matching DAYS/session.day)
+// falls within the given calendar month — used to project recurring-session income.
+function weekdayOccurrencesInMonth(year, month, dayIdx) {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  let count = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const jsDay = new Date(year, month, d).getDay();
+    const idx = jsDay === 0 ? 6 : jsDay - 1;
+    if (idx === dayIdx) count++;
+  }
+  return count;
+}
+
 function openContact(raw) {
   const c = raw.trim();
   if (!c) return;
@@ -686,6 +699,39 @@ function TutorApp() {
     const estimatedGapLTV = Math.round(gapWeeks * (s.weeklyHours || 0) * s.rate);
     return estimatedGapLTV + loggedLTV;
   };
+  // "Заработано" — сумма за уже отмеченные проведённые занятия в этом месяце.
+  // "План" — прогноз по расписанию: сколько принесут все занятия (регулярные и
+  // разовые), которые попадают в текущий месяц, если пройдут как запланировано.
+  const monthlyStats = useMemo(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}`;
+
+    let earned = 0;
+    students.forEach(s => {
+      (s.history || []).forEach(h => {
+        if (h.type === "lesson" && h.date && h.date.startsWith(monthPrefix)) {
+          earned += (s.rate || 0) * (s.sessionDuration || 1);
+        }
+      });
+    });
+
+    let planned = 0;
+    sessions.forEach(sess => {
+      const student = students.find(s => s.id === sess.studentId);
+      if (!student || !student.active) return;
+      const price = (student.rate || 0) * (sess.duration || student.sessionDuration || 1);
+      if (sess.recurring === false) {
+        if (sess.date && sess.date.startsWith(monthPrefix)) planned += price;
+      } else {
+        planned += price * weekdayOccurrencesInMonth(year, month, sess.day);
+      }
+    });
+
+    return { earned, planned };
+  }, [students, sessions]);
+
   const updateStudent = (id, ch) => setStudents(prev => prev.map(s => s.id === id ? { ...s, ...ch } : s));
   const addStudent = (data) => { setStudents(prev => [...prev, { id: nextId, ...data, active: true }]); setNextId(n => n + 1); };
   const clearSchedule = () => { if (window.confirm("Очистить всё расписание?")) setSessions([]); };
@@ -1236,6 +1282,7 @@ function TutorApp() {
           updateStudent={updateStudent} addStudent={addStudent}
           addLessons={addLessons} markLessonDone={markLessonDone} deleteHistoryEvent={deleteHistoryEvent}
           archiveStudent={archiveStudent} unarchiveStudent={unarchiveStudent} getStudentLTV={getStudentLTV}
+          monthlyStats={monthlyStats}
         />
       )}
 
@@ -1709,7 +1756,7 @@ function NotesField({ value, onSave }) {
   );
 }
 
-function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, deleteStudent, updateStudent, addStudent, addLessons, markLessonDone, deleteHistoryEvent, archiveStudent, unarchiveStudent, getStudentLTV }) {
+function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, deleteStudent, updateStudent, addStudent, addLessons, markLessonDone, deleteHistoryEvent, archiveStudent, unarchiveStudent, getStudentLTV, monthlyStats }) {
   const [editId, setEditId] = useState(null);
   const [openHistoryId, setOpenHistoryId] = useState(null);
   const [ef, setEf] = useState({});
@@ -1760,6 +1807,18 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
 
   return (
     <div style={{ maxWidth: 620, margin: "0 auto", padding: "20px 16px" }}>
+      {monthlyStats && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <div style={{ flex: 1, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 4 }}>Заработано в этом месяце</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "var(--text)", fontFamily: "'JetBrains Mono', monospace" }}>{monthlyStats.earned.toLocaleString()} ₽</div>
+          </div>
+          <div style={{ flex: 1, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600, marginBottom: 4 }}>План на месяц</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "var(--text)", fontFamily: "'JetBrains Mono', monospace" }}>{monthlyStats.planned.toLocaleString()} ₽</div>
+          </div>
+        </div>
+      )}
       {students.filter(s => !s.archived).map(s => {
         const c = getColor(s.id);
         const placed = getPlaced(s.id);
