@@ -30,10 +30,7 @@ const PALETTE = [
   { bg: "#ecfccb", border: "#bef264", text: "#365314", accent: "#65a30d", light: "#f7fee7" },
 ];
 
-const DEFAULT_STUDENTS = [
-  { id: 1, name: "Алина К.", rate: 3000, active: true, subject: "ЕГЭ химия", weeklyHours: 2, sessionDuration: 1, lessonsPaid: 4, paymentMode: "subscription", lessonsPerBundle: 4, notes: "", parentContact: "" },
-  { id: 2, name: "Максим Д.", rate: 3000, active: true, subject: "ОГЭ химия", weeklyHours: 3, sessionDuration: 1.5, lessonsPaid: 2, paymentMode: "subscription", lessonsPerBundle: 4, notes: "", parentContact: "" },
-];
+const DEFAULT_STUDENTS = [];
 
 const PAYMENT_MODE_LABELS = { subscription: "Абонемент", single: "Разовая" };
 
@@ -513,7 +510,6 @@ export default function App() {
             appearance={{
               elements: {
                 header: { display: "none" },
-                footerAction: { display: "none" },
                 socialButtons: { display: "none" },
                 dividerRow: { display: "none" },
               },
