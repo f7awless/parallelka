@@ -34,6 +34,7 @@ const PALETTE = [
 const DEFAULT_STUDENTS = [];
 
 const PAYMENT_MODE_LABELS = { subscription: "Абонемент", single: "Разовая" };
+const WORK_FORMATS = ["ЕГЭ", "ОГЭ", "ПУ", "ВИ"];
 
 function loadState() {
   try {
@@ -131,6 +132,11 @@ function weekdayOccurrencesInMonth(year, month, dayIdx) {
     if (idx === dayIdx) count++;
   }
   return count;
+}
+
+function truncate(str, n) {
+  if (!str) return str;
+  return str.length > n ? str.slice(0, n) + "…" : str;
 }
 
 function openContact(raw) {
@@ -1749,6 +1755,27 @@ function MarkDoneInput({ onMark, label }) {
   );
 }
 
+// Long freeform notes (or accidental keyboard mashes) shouldn't blow up a
+// card — show a short preview with a toggle to read the rest.
+function ExpandableText({ text, maxChars = 60, style }) {
+  const [open, setOpen] = useState(false);
+  if (!text) return null;
+  const isLong = text.length > maxChars;
+  return (
+    <div style={style}>
+      <span style={{ overflowWrap: "anywhere" }}>{open || !isLong ? text : text.slice(0, maxChars) + "…"}</span>
+      {isLong && (
+        <button
+          onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+          style={{ display: "block", marginTop: 3, fontSize: 11, color: "var(--text-dim)", background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline", fontFamily: "'Manrope', sans-serif" }}
+        >
+          {open ? "Свернуть" : "Показать полностью"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function NotesField({ value, onSave }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(value);
@@ -1758,9 +1785,9 @@ function NotesField({ value, onSave }) {
       <div
         className="notes-field"
         onClick={() => { setText(value); setEditing(true); }}
-        style={{ fontSize: 12, color: value ? "var(--text-mid)" : "var(--text-faint)", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 7, padding: "6px 10px", cursor: "pointer", minHeight: 14, fontFamily: "'Manrope', sans-serif", display: "flex", alignItems: "center" }}
+        style={{ fontSize: 12, color: value ? "var(--text-mid)" : "var(--text-faint)", background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 7, padding: "6px 10px", cursor: "pointer", minHeight: 14, fontFamily: "'Manrope', sans-serif" }}
       >
-        {value || "+ заметка по ученику (что проходим, слабые темы...)"}
+        {value ? <ExpandableText text={value} maxChars={70} /> : "+ заметка по ученику (что проходим, слабые темы...)"}
       </div>
     );
   }
@@ -1791,16 +1818,18 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
   const [openHistoryId, setOpenHistoryId] = useState(null);
   const [ef, setEf] = useState({});
   const [showAdd, setShowAdd] = useState(false);
-  const [af, setAf] = useState({ name: "", subject: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentContact: "", parentName: "", parentContact: "", colorIdx: null, startDate: isoDate(new Date()) });
+  const [af, setAf] = useState({ name: "", subject: "", grade: "", workFormat: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentContact: "", parentName: "", parentContact: "", colorIdx: null, startDate: isoDate(new Date()) });
 
   const startEdit = (s) => {
     setEditId(s.id);
-    setEf({ name: s.name, subject: s.subject, rate: String(s.rate), weeklyHours: String(s.weeklyHours), sessionDuration: s.sessionDuration, paymentMode: s.paymentMode || "subscription", lessonsPerBundle: String(s.lessonsPerBundle ?? 4), studentContact: s.studentContact || "", parentName: s.parentName || "", parentContact: s.parentContact || "", colorIdx: s.colorIdx ?? null, startDate: s.startDate || "", endDate: s.endDate || "" });
+    setEf({ name: s.name, subject: s.subject, grade: s.grade || "", workFormat: s.workFormat || "", rate: String(s.rate), weeklyHours: String(s.weeklyHours), sessionDuration: s.sessionDuration, paymentMode: s.paymentMode || "subscription", lessonsPerBundle: String(s.lessonsPerBundle ?? 4), studentContact: s.studentContact || "", parentName: s.parentName || "", parentContact: s.parentContact || "", colorIdx: s.colorIdx ?? null, startDate: s.startDate || "", endDate: s.endDate || "" });
   };
   const saveEdit = (id) => {
     updateStudent(id, {
       name: ef.name.trim() || undefined,
       subject: ef.subject.trim() || undefined,
+      grade: ef.grade.trim(),
+      workFormat: ef.workFormat,
       rate: parseInt(ef.rate) || undefined,
       weeklyHours: parseFloat(ef.weeklyHours) || undefined,
       sessionDuration: ef.sessionDuration,
@@ -1818,13 +1847,13 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
   const doAdd = () => {
     if (!af.name.trim()) return;
     addStudent({
-      name: af.name.trim(), subject: af.subject.trim() || "Химия", rate: parseInt(af.rate) || 3000,
+      name: af.name.trim(), subject: af.subject.trim() || "Химия", grade: af.grade.trim(), workFormat: af.workFormat, rate: parseInt(af.rate) || 3000,
       weeklyHours: parseFloat(af.weeklyHours) || 2, sessionDuration: af.sessionDuration,
       lessonsPaid: parseInt(af.lessonsPaid) || 0, paymentMode: af.paymentMode,
       lessonsPerBundle: parseInt(af.lessonsPerBundle) || 4, studentContact: af.studentContact.trim(), parentName: af.parentName.trim(), parentContact: af.parentContact.trim(), notes: "",
       colorIdx: af.colorIdx, startDate: af.startDate,
     });
-    setAf({ name: "", subject: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentContact: "", parentName: "", parentContact: "", colorIdx: null, startDate: isoDate(new Date()) });
+    setAf({ name: "", subject: "", grade: "", workFormat: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentContact: "", parentName: "", parentContact: "", colorIdx: null, startDate: isoDate(new Date()) });
     setShowAdd(false);
   };
 
@@ -1858,6 +1887,14 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Field label="Имя"><input className="edit-inp" style={{ width: "100%", minWidth: 110 }} value={ef.name} onChange={e => setEf(f => ({ ...f, name: e.target.value }))} /></Field>
                   <Field label="Предмет"><input className="edit-inp" style={{ width: "100%", minWidth: 100 }} value={ef.subject} onChange={e => setEf(f => ({ ...f, subject: e.target.value }))} /></Field>
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <Field label="Класс"><input className="edit-inp" style={{ width: 60 }} placeholder="11" value={ef.grade} onChange={e => setEf(f => ({ ...f, grade: e.target.value }))} /></Field>
+                  <Field label="Формат">
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {WORK_FORMATS.map(wf => <button key={wf} className={`dur-pill ${ef.workFormat === wf ? "sel" : ""}`} onClick={() => setEf(f => ({ ...f, workFormat: f.workFormat === wf ? "" : wf }))}>{wf}</button>)}
+                    </div>
+                  </Field>
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
                   <Field label="Ставка ₽/ч"><input className="edit-inp" type="number" style={{ width: 90 }} value={ef.rate} onChange={e => setEf(f => ({ ...f, rate: e.target.value }))} /></Field>
@@ -1910,6 +1947,8 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 13, fontWeight: 600 }}>{s.name}</span>
                     <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{s.subject}</span>
+                    {s.workFormat && <span style={{ fontSize: 10, fontWeight: 700, color: c.text, background: c.bg, borderRadius: 5, padding: "1px 6px" }}>{s.workFormat}</span>}
+                    {s.grade && <span style={{ fontSize: 11, color: "var(--text-faint)" }}>{s.grade} класс</span>}
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 3, display: "flex", gap: 8, flexWrap: "wrap", fontFamily: "'JetBrains Mono', monospace" }}>
                     <span>{s.weeklyHours}ч/нед</span>
@@ -1978,7 +2017,7 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                         </span>
                         {s.lastLessonDate && (
                           <span style={{ fontSize: 10, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace" }}>
-                            посл. занятие {formatDate(s.lastLessonDate)}{s.lastLessonNote ? ` · «${s.lastLessonNote}»` : ""}
+                            посл. занятие {formatDate(s.lastLessonDate)}{s.lastLessonNote ? ` · «${truncate(s.lastLessonNote, 40)}»` : ""}
                           </span>
                         )}
                         <MarkDoneInput onMark={(date, note) => markLessonDone(s.id, date, note)} />
@@ -2054,7 +2093,7 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                     <span style={{ fontSize: 14, color: "var(--text-mid)", flex: 1, minWidth: 0 }}>
                       {ev.type === "payment" ? `Оплата: +${ev.amount} занятий` : "Занятие прошло (−1)"}
                       {ev.type === "lesson" && ev.note && (
-                        <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }}>«{ev.note}»</div>
+                        <ExpandableText text={`«${ev.note}»`} maxChars={80} style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }} />
                       )}
                     </span>
                     <button onClick={() => deleteHistoryEvent(s.id, ev.id)} title="Удалить запись и откатить баланс" className="iBtn del" style={{ fontSize: 13, flexShrink: 0 }}>✕</button>
@@ -2075,7 +2114,19 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
             </div>
             <div style={{ flex: 1, minWidth: 100 }}>
               <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Предмет</div>
-              <input className="edit-inp" style={{ width: "100%" }} placeholder="ЕГЭ химия" value={af.subject} onChange={e => setAf(f => ({ ...f, subject: e.target.value }))} />
+              <input className="edit-inp" style={{ width: "100%" }} placeholder="Химия" value={af.subject} onChange={e => setAf(f => ({ ...f, subject: e.target.value }))} />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Класс</div>
+              <input className="edit-inp" style={{ width: 60 }} placeholder="11" value={af.grade} onChange={e => setAf(f => ({ ...f, grade: e.target.value }))} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Формат</div>
+              <div style={{ display: "flex", gap: 4 }}>
+                {WORK_FORMATS.map(f => <button key={f} className={`dur-pill ${af.workFormat === f ? "sel" : ""}`} onClick={() => setAf(v => ({ ...v, workFormat: v.workFormat === f ? "" : f }))}>{f}</button>)}
+              </div>
             </div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}>
