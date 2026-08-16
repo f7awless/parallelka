@@ -1756,6 +1756,13 @@ function NotesField({ value, onSave }) {
   );
 }
 
+const Field = ({ label, children }) => (
+  <div>
+    <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>{label}</div>
+    {children}
+  </div>
+);
+
 function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, deleteStudent, updateStudent, addStudent, addLessons, markLessonDone, deleteHistoryEvent, archiveStudent, unarchiveStudent, getStudentLTV, monthlyStats }) {
   const [editId, setEditId] = useState(null);
   const [openHistoryId, setOpenHistoryId] = useState(null);
@@ -1797,13 +1804,6 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
     setAf({ name: "", subject: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentContact: "", parentName: "", parentContact: "", colorIdx: null, startDate: isoDate(new Date()) });
     setShowAdd(false);
   };
-
-  const Field = ({ label, children }) => (
-    <div>
-      <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>{label}</div>
-      {children}
-    </div>
-  );
 
   return (
     <div style={{ maxWidth: 620, margin: "0 auto", padding: "20px 16px" }}>
@@ -1903,6 +1903,7 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                 </div>
                 <button className="iBtn" onClick={() => startEdit(s)}>✎</button>
                 <button className="iBtn" title="В архив" onClick={() => archiveStudent(s.id)} style={{ fontSize: 11 }}>📦</button>
+                <button className="iBtn del" title="Удалить навсегда" onClick={() => { if (window.confirm(`Удалить ${s.name} без возможности восстановить?`)) deleteStudent(s.id); }}>✕</button>
               </div>
 
               {/* Contacts — separate line: the student's own contact, and the parent's name + contact */}
