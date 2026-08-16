@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
-import { SignedIn, SignedOut, SignIn, UserButton } from "@clerk/clerk-react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { SignedIn, SignedOut, SignIn, UserButton, useSession, useUser } from "@clerk/clerk-react";
+import { createClerkSupabaseClient } from "./supabase";
 
 const STORAGE_KEY = "parallelka-v1";
 const SLOT_HEIGHT = 30;
@@ -549,6 +550,11 @@ function TutorApp() {
   ]);
   const [nextTaskId, setNextTaskId] = useState(() => initial.current.nextTaskId || 1);
   const [nextProjectId, setNextProjectId] = useState(() => initial.current.nextProjectId || 3);
+  const { session } = useSession();
+  const { user } = useUser();
+  const supabase = useMemo(() => createClerkSupabaseClient(session), [session]);
+  const hydratedRef = useRef(false);
+  const [cloudReady, setCloudReady] = useState(false);
   const [weekStart, setWeekStart] = useState(() => getMonday(new Date()));
   // On a phone-width viewport the 7-column week grid is unreadable, so start on Day —
   // desktop/tablet still default to Week as before.
@@ -568,14 +574,54 @@ function TutorApp() {
   const goToday = () => { setWeekStart(getMonday(new Date())); setSelectedDayIdx(new Date().getDay() === 0 ? 6 : new Date().getDay() - 1); };
   const swipeDayHandlers = useSwipeDay(calendarZoom === "day", goPrevWeek, goNextWeek);
 
+  // Pull this account's data from Supabase once on sign-in, before any local
+  // state gets written back up — otherwise the pre-hydration defaults would
+  // clobber whatever's already saved in the cloud for this user.
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode,
-        appMode, tasks, taskProjects, nextTaskId, nextProjectId,
-      }));
-    } catch {}
-  }, [students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode, appMode, tasks, taskProjects, nextTaskId, nextProjectId]);
+    if (!user?.id) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase.from("app_data").select("data").eq("user_id", user.id).maybeSingle();
+      if (cancelled) return;
+      if (error) console.error("Supabase load error:", error);
+      const d = data?.data;
+      if (d) {
+        if (d.students) setStudents(d.students);
+        if (d.sessions) setSessions(d.sessions);
+        if (d.nextId) setNextId(d.nextId);
+        if (d.calendarMode) setCalendarMode(d.calendarMode);
+        if (d.personalEvents) setPersonalEvents(d.personalEvents);
+        if (d.examDates) setExamDates(d.examDates);
+        if (d.darkMode !== undefined) setDarkMode(d.darkMode);
+        if (d.appMode) setAppMode(d.appMode);
+        if (d.tasks) setTasks(d.tasks);
+        if (d.taskProjects) setTaskProjects(d.taskProjects);
+        if (d.nextTaskId) setNextTaskId(d.nextTaskId);
+        if (d.nextProjectId) setNextProjectId(d.nextProjectId);
+      }
+      hydratedRef.current = true;
+      setCloudReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id, supabase]);
+
+  const syncTimerRef = useRef(null);
+  useEffect(() => {
+    const snapshot = {
+      students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode,
+      appMode, tasks, taskProjects, nextTaskId, nextProjectId,
+    };
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot)); } catch {}
+
+    if (!hydratedRef.current || !user?.id) return;
+    clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      supabase.from("app_data")
+        .upsert({ user_id: user.id, data: snapshot, updated_at: new Date().toISOString() })
+        .then(({ error }) => { if (error) console.error("Supabase sync error:", error); });
+    }, 800);
+    return () => clearTimeout(syncTimerRef.current);
+  }, [students, sessions, nextId, calendarMode, personalEvents, examDates, darkMode, appMode, tasks, taskProjects, nextTaskId, nextProjectId, cloudReady, user?.id, supabase]);
 
   // Task CRUD for the planner
   const addTask = (data) => { setTasks(prev => [...prev, { id: nextTaskId, done: false, doneAt: null, dueDate: null, priority: 0, projectId: null, list: "inbox", notes: "", createdAt: isoDate(new Date()), ...data }]); setNextTaskId(n => n + 1); };
