@@ -138,13 +138,27 @@ function weekdayOccurrencesInMonth(year, month, dayIdx) {
 // that show up in a tutor's own spreadsheet (transitions like "3000 => 2250",
 // dates like "7.6.26", a status column in Russian, "ЕГЭ 11" combo cells).
 function parseImportDate(raw) {
-  if (!raw) return "";
+  if (!raw && raw !== 0) return "";
   const s = String(raw).trim();
-  const m = s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})$/);
+  if (!s || s === "-" || s === "—") return "";
+  // A bare Excel date serial (days since 1899-12-30) — happens when a real
+  // .xlsx date cell comes through without a recognized display format.
+  if (/^\d{4,6}(\.\d+)?$/.test(s)) {
+    const serial = parseFloat(s);
+    if (serial > 20000 && serial < 80000) {
+      const d = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
+      if (!isNaN(d)) return isoDate(d);
+    }
+  }
+  // D.M.Y / D/M/Y / D-M-Y (this sheet's own format) or Y-M-D if the first
+  // group is clearly a 4-digit year.
+  const m = s.match(/^(\d{1,4})[.\/\-](\d{1,2})[.\/\-](\d{1,4})$/);
   if (m) {
-    let [, d, mo, y] = m;
+    let [, a, b, c] = m;
+    if (a.length === 4) return `${a}-${b.padStart(2, "0")}-${c.padStart(2, "0")}`;
+    let y = c;
     if (y.length === 2) y = (Number(y) < 70 ? "20" : "19") + y;
-    return `${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    return `${y}-${b.padStart(2, "0")}-${a.padStart(2, "0")}`;
   }
   const d = new Date(s);
   return isNaN(d) ? "" : isoDate(d);
@@ -153,7 +167,11 @@ function parseImportNumber(raw) {
   if (raw === undefined || raw === null) return null;
   const s = String(raw);
   const parts = s.split("=>");
-  const last = (parts[parts.length - 1] || "").replace(/[^\d.,-]/g, "").replace(",", ".");
+  let last = (parts[parts.length - 1] || "").trim().replace(/[^\d.,-]/g, "");
+  // A "," or "." followed by exactly 3 digits (and nothing after) is a
+  // thousands separator, not a decimal point — rates/hours here never have
+  // 3 decimal places. Drop it; any remaining comma is a real decimal comma.
+  last = last.replace(/[.,](\d{3})(?!\d)/g, "$1").replace(",", ".");
   const n = parseFloat(last);
   return isNaN(n) ? null : n;
 }
