@@ -1,0 +1,15 @@
+{
+  "name": "chemtutor",
+  "version": "1.0.0",
+  "description": "ХимКабинет — платформа репетитора по химии: кабинеты преподавателя и ученика",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/server.js",
+    "dev": "node --watch --disable-warning=ExperimentalWarning server/server.js",
+    "demo": "node --disable-warning=ExperimentalWarning scripts/demo.js",
+    "backup": "node --disable-warning=ExperimentalWarning scripts/backup.js",
+    "test": "node --disable-warning=ExperimentalWarning --test"
+  }
+}
