@@ -79,6 +79,7 @@ function timeToSlot(hhmm) {
 }
 
 const MONTHS_SHORT = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+const MONTHS_FULL = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
 
 function getMonday(date) {
   const d = new Date(date);
@@ -188,6 +189,18 @@ function parseImportStatus(raw) {
   return { active: true, archived: false };
 }
 
+// Closes the loop on a reschedule: when something is logged for `date`
+// (a lesson happened, got cancelled, or got rescheduled again), check
+// whether that date was the target of an earlier pending reschedule and,
+// if so, stamp its outcome — this is what makes "conversion" measurable.
+function resolvePendingReschedule(history, date, outcome) {
+  const idx = history.findIndex(h => h.type === "rescheduled" && h.resolution === null && h.newDate === date);
+  if (idx === -1) return history;
+  const next = [...history];
+  next[idx] = { ...next[idx], resolution: outcome };
+  return next;
+}
+
 // "89365550141 (Paladinlightnin)" → phone + telegram; either half (or both)
 // may be missing, and a bare "-" placeholder counts as missing.
 function splitPhoneTelegram(raw) {
@@ -252,6 +265,11 @@ function eventsVisibleInWeek(events, weekStart) {
         const diffDays = Math.floor((d - weekStart) / 86400000);
         return diffDays >= 0 && diffDays < 7;
       }
+      // Recurring series can be capped ("delete this and all future") or
+      // have single weeks skipped ("delete only this one") — see removeSession.
+      const occurrenceDate = isoDate(addDays(weekStart, e.day));
+      if (e.until && occurrenceDate >= e.until) return false;
+      if (e.exceptions && e.exceptions.includes(occurrenceDate)) return false;
       return true;
     })
     .map(e => (e.recurring === false ? { ...e, day: weekdayFromIso(e.date) } : e));
@@ -770,8 +788,17 @@ function TutorApp() {
 
   const updateSession = (id, ch) => setSessions(prev => prev.map(s => s.id === id ? { ...s, ...ch } : s));
 
-  const removeSession = (id) => {
-    setSessions(prev => prev.filter(s => s.id !== id));
+  // mode: undefined (one-off session, delete outright) | "only" (skip just
+  // this week's occurrence, keep the rest of the recurring series) | "future"
+  // (cap the series so it stops at — and including — this occurrence).
+  const removeSession = (id, mode, occurrenceDate) => {
+    if (mode === "only") {
+      setSessions(prev => prev.map(s => s.id === id ? { ...s, exceptions: [...(s.exceptions || []), occurrenceDate] } : s));
+    } else if (mode === "future") {
+      setSessions(prev => prev.map(s => s.id === id ? { ...s, until: occurrenceDate } : s));
+    } else {
+      setSessions(prev => prev.filter(s => s.id !== id));
+    }
     setPopup(null);
   };
 
@@ -790,12 +817,15 @@ function TutorApp() {
   // marked done. Without a start date, it's just the logged-lesson sum.
   const getStudentLTV = (s) => {
     const loggedLessons = (s.history || []).filter(h => h.type === "lesson");
+    // Has a start date but not a single lesson logged in the app yet (e.g.
+    // just imported) — nothing real to base an estimate on, don't guess.
+    if (s.startDate && loggedLessons.length === 0) return null;
     const loggedLTV = loggedLessons.length * s.rate * s.sessionDuration;
     if (!s.startDate) return loggedLTV;
 
     const earliestLogged = loggedLessons.reduce((min, h) => (!min || h.date < min ? h.date : min), null);
     const gapEnd = earliestLogged || s.endDate || isoDate(new Date());
-    const gapWeeks = weeksBetween(s.startDate, gapEnd);
+    const gapWeeks = Math.floor(weeksBetween(s.startDate, gapEnd));
     const estimatedGapLTV = Math.round(gapWeeks * (s.weeklyHours || 0) * s.rate);
     return estimatedGapLTV + loggedLTV;
   };
@@ -870,7 +900,22 @@ function TutorApp() {
       lessonsPaid: (s.lessonsPaid ?? 0) - 1,
       lastLessonDate: d,
       lastLessonNote: note || "",
-      history: [...(s.history || []), { id: Date.now() + Math.random(), type: "lesson", date: d, note: note || "" }],
+      history: resolvePendingReschedule([...(s.history || []), { id: Date.now() + Math.random(), type: "lesson", date: d, note: note || "" }], d, "done"),
+    } : s));
+  };
+
+  // Only for recurring (permanent) lessons — reschedule/cancel don't touch
+  // the paid-lessons balance, since the lesson never actually happened.
+  const rescheduleLesson = (id, date, newDate) => {
+    setStudents(prev => prev.map(s => s.id === id ? {
+      ...s,
+      history: resolvePendingReschedule([...(s.history || []), { id: Date.now() + Math.random(), type: "rescheduled", date, newDate, resolution: null }], date, "rescheduled_again"),
+    } : s));
+  };
+  const cancelLesson = (id, date) => {
+    setStudents(prev => prev.map(s => s.id === id ? {
+      ...s,
+      history: resolvePendingReschedule([...(s.history || []), { id: Date.now() + Math.random(), type: "cancelled", date }], date, "cancelled"),
     } : s));
   };
 
@@ -879,7 +924,7 @@ function TutorApp() {
       if (s.id !== id) return s;
       const ev = (s.history || []).find(h => h.id === eventId);
       if (!ev) return s;
-      const delta = ev.type === "payment" ? -ev.amount : 1;
+      const delta = ev.type === "payment" ? -ev.amount : ev.type === "lesson" ? 1 : 0;
       return { ...s, lessonsPaid: (s.lessonsPaid ?? 0) + delta, history: s.history.filter(h => h.id !== eventId) };
     }));
   };
@@ -1378,8 +1423,10 @@ function TutorApp() {
               <SessionPopup
                 sess={sess} student={student} color={c} weekStart={weekStart}
                 onMarkDone={(date, note) => { markLessonDone(student.id, date, note); setPopup(null); }}
+                onReschedule={(date, newDate) => { rescheduleLesson(student.id, date, newDate); setPopup(null); }}
+                onCancel={date => { cancelLesson(student.id, date); setPopup(null); }}
                 onUpdate={ch => { updateSession(sess.id, ch); setPopup(null); }}
-                onDelete={() => removeSession(sess.id)}
+                onDelete={(mode, occurrenceDate) => removeSession(sess.id, mode, occurrenceDate)}
                 onClose={() => setPopup(null)}
               />
             );
@@ -1456,12 +1503,17 @@ function RecurrenceControl({ recurring, date, onChange }) {
   );
 }
 
-function SessionPopup({ sess, student, color, weekStart, onMarkDone, onUpdate, onDelete, onClose }) {
+function SessionPopup({ sess, student, color, weekStart, onMarkDone, onReschedule, onCancel, onUpdate, onDelete, onClose }) {
   const [recurring, setRecurring] = useState(sess.recurring !== false);
   const [date, setDate] = useState(sess.date || isoDate(addDays(weekStart, sess.day)));
   const [startTime, setStartTime] = useState(slotToTime(sess.startSlot));
   const [day, setDay] = useState(sess.day);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
   const c = color;
+  // Independent of the editable `date` above (which the Повторение toggle
+  // can change mid-edit) — this is specifically which real-world date this
+  // popup was opened for, used only to decide the delete scope.
+  const occurrenceDate = sess.date || isoDate(addDays(weekStart, sess.day));
 
   const handleRecChange = (rec, d) => {
     setRecurring(rec);
@@ -1509,13 +1561,37 @@ function SessionPopup({ sess, student, color, weekStart, onMarkDone, onUpdate, o
         <RecurrenceControl recurring={recurring} date={date} onChange={handleRecChange} />
       </div>
 
-      <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: recurring ? 14 : 8 }}>
         <MarkDoneInput label="Занятие прошло, списать −1" onMark={onMarkDone} />
       </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button className="save-btn" style={{ flex: 1 }} onClick={save}>Сохранить</button>
-        <button className="del-btn" style={{ width: "auto", padding: "9px 14px" }} onClick={onDelete}>Удалить</button>
-      </div>
+      {recurring && (
+        <div style={{ marginBottom: 14, padding: "10px", border: "1px dashed var(--border2)", borderRadius: 8, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Если занятие не прошло как обычно</div>
+          <div>
+            <div style={{ fontSize: 12, color: "var(--text-mid)", fontWeight: 600, marginBottom: 5 }}>↪ Перенести на другую дату/время</div>
+            <RescheduleInput sessStartSlot={sess.startSlot} onReschedule={onReschedule} onPermanentMove={(newDay, newSlot) => onUpdate({ recurring: true, date: undefined, day: newDay, startSlot: newSlot })} />
+          </div>
+          <div style={{ borderTop: "1px solid var(--border)" }} />
+          <div>
+            <div style={{ fontSize: 12, color: "var(--text-mid)", fontWeight: 600, marginBottom: 5 }}>🚫 Занятие не состоится вообще</div>
+            <CancelInput onCancel={onCancel} />
+          </div>
+        </div>
+      )}
+      {deleteConfirm ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 8, padding: 8 }}>
+          <div style={{ fontSize: 12, color: "var(--text-mid)" }}>Удалить только это занятие ({formatDate(occurrenceDate)}), или его и все следующие?</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="del-btn" style={{ flex: 1, padding: "6px 8px" }} onClick={() => onDelete("only", occurrenceDate)}>Только это</button>
+            <button className="del-btn" style={{ flex: 1, padding: "6px 8px" }} onClick={() => onDelete("future", occurrenceDate)}>Это и все следующие</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="save-btn" style={{ flex: 1 }} onClick={save}>Сохранить</button>
+          <button className="del-btn" style={{ width: "auto", padding: "9px 14px" }} onClick={() => recurring ? setDeleteConfirm(true) : onDelete()}>Удалить</button>
+        </div>
+      )}
     </Sheet>
   );
 }
@@ -1626,24 +1702,26 @@ function NewSessionPopup({ draft, students, getColor, weekStart, onCreate, onCan
 function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, onDelete, ghostLayouts, ghostStudents, ghostGetColor, visibleDays, calendarZoom, goPrevWeek, goNextWeek }) {
   const [popup, setPopup] = useState(null);
   const [title, setTitle] = useState("");
-  const [duration, setDuration] = useState(1);
   const [colorIdx, setColorIdx] = useState(0);
   const [day, setDay] = useState(0);
   const [recurring, setRecurring] = useState(true);
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
 
   const openNew = (d, slot) => {
-    setTitle(""); setDuration(1); setColorIdx(0); setDay(d);
+    setTitle(""); setColorIdx(0); setDay(d);
     setRecurring(true); setDate(isoDate(addDays(weekStart, d)));
     setStartTime(slotToTime(slot));
+    setEndTime(slotToTime(slot + 2));
     setPopup({ type: "new", day: d, slot });
   };
   const openEdit = (ev) => {
-    setTitle(ev.title); setDuration(ev.duration); setColorIdx(ev.colorIdx ?? 0); setDay(ev.day);
+    setTitle(ev.title); setColorIdx(ev.colorIdx ?? 0); setDay(ev.day);
     setRecurring(ev.recurring !== false);
     setDate(ev.date || isoDate(addDays(weekStart, ev.day)));
     setStartTime(slotToTime(ev.startSlot));
+    setEndTime(slotToTime(ev.startSlot + ev.duration * 2));
     setPopup({ type: "edit", event: ev });
   };
 
@@ -1653,13 +1731,15 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
   const submit = () => {
     if (!title.trim()) return;
     const slot = timeToSlot(startTime);
-    if (slot + duration * 2 > TOTAL_SLOTS || slot < 0) return;
+    const endSlot = timeToSlot(endTime);
+    const dur = (endSlot - slot) * 0.5;
+    if (dur <= 0 || slot < 0 || endSlot > TOTAL_SLOTS) return;
     const recFields = recurring ? { recurring: true, date: undefined } : { recurring: false, date };
     const effectiveDay = recurring ? day : weekdayFromIso(date);
     if (popup.type === "new") {
-      onAdd({ day: effectiveDay, startSlot: slot, duration, title: title.trim(), colorIdx, ...recFields });
+      onAdd({ day: effectiveDay, startSlot: slot, duration: dur, title: title.trim(), colorIdx, ...recFields });
     } else {
-      onUpdate(popup.event.id, { title: title.trim(), duration, colorIdx, day: effectiveDay, startSlot: slot, ...recFields });
+      onUpdate(popup.event.id, { title: title.trim(), duration: dur, colorIdx, day: effectiveDay, startSlot: slot, ...recFields });
     }
     setPopup(null);
   };
@@ -1751,14 +1831,14 @@ function PersonalCalendarTab({ events, dayLayouts, weekStart, onAdd, onUpdate, o
               <DayOfWeekPicker day={day} onChange={setDay} />
             </div>
           )}
-          <div style={{ marginBottom: 12 }}>
-            <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Точное время начала</div>
-            <input className="edit-inp" type="time" style={{ width: 130, fontSize: 14, padding: "8px 10px" }} value={startTime} onChange={e => setStartTime(e.target.value)} />
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Длительность</div>
-            <div style={{ display: "flex", gap: 6 }}>
-              {DURATIONS.map(d => <button key={d} className={`dur-pill ${duration === d ? "sel" : ""}`} onClick={() => setDuration(d)}>{d}ч</button>)}
+          <div style={{ marginBottom: 12, display: "flex", gap: 10 }}>
+            <div>
+              <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Начало</div>
+              <input className="edit-inp" type="time" style={{ width: 120, fontSize: 14, padding: "8px 10px" }} value={startTime} onChange={e => setStartTime(e.target.value)} />
+            </div>
+            <div>
+              <div className="field-label" style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>Конец</div>
+              <input className="edit-inp" type="time" style={{ width: 120, fontSize: 14, padding: "8px 10px" }} value={endTime} onChange={e => setEndTime(e.target.value)} />
             </div>
           </div>
           <div style={{ marginBottom: 12 }}>
@@ -1854,6 +1934,63 @@ function MarkDoneInput({ onMark, label }) {
   );
 }
 
+// Recurring lessons only — see resolvePendingReschedule for how the new
+// date's eventual outcome (done / cancelled / rescheduled again) gets
+// linked back to this entry for the monthly conversion stat.
+// Asks once/permanent first: a one-off move logs a history event (feeds the
+// monthly reschedule/conversion stats), a permanent move just edits the
+// recurring slot's day/time going forward — plain schedule change, no event.
+// One date + one time, one button — the once-vs-forever choice only shows up
+// after, as a confirm step, instead of upfront (which was confusing next to
+// the unrelated "Повторение" toggle above it).
+function RescheduleInput({ sessStartSlot, onReschedule, onPermanentMove }) {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [newDate, setNewDate] = useState("");
+  const [newTime, setNewTime] = useState(slotToTime(sessStartSlot));
+  const [confirming, setConfirming] = useState(false);
+
+  if (confirming) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 8, padding: 8 }}>
+        <div style={{ fontSize: 12, color: "var(--text-mid)" }}>Перенести на {formatDate(newDate)}, {newTime} — только это занятие или все следующие тоже?</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button className="inline-form-btn" style={{ flex: 1, fontSize: 11, fontWeight: 600, background: "var(--surface)", border: "1px solid var(--border2)", color: "var(--text-mid)", borderRadius: 8, padding: "6px 8px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
+            onClick={() => { onReschedule(todayIso, newDate); setConfirming(false); }}>
+            Только это
+          </button>
+          <button className="inline-form-btn" style={{ flex: 1, fontSize: 11, fontWeight: 600, background: "var(--surface)", border: "1px solid var(--border2)", color: "var(--text-mid)", borderRadius: 8, padding: "6px 8px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}
+            onClick={() => { onPermanentMove(weekdayFromIso(newDate), timeToSlot(newTime)); setConfirming(false); }}>
+            Все следующие
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="inline-form-row" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <input className="edit-inp inline-form-field" type="date" style={{ width: 130, padding: "4px 7px", fontSize: 12 }} value={newDate} onChange={e => setNewDate(e.target.value)} />
+      <input className="edit-inp inline-form-field" type="time" style={{ width: 100, padding: "4px 7px", fontSize: 12 }} value={newTime} onChange={e => setNewTime(e.target.value)} />
+      <button className="inline-form-btn" onClick={() => newDate && setConfirming(true)} style={{ fontSize: 11, fontWeight: 600, background: "var(--surface)", border: "1px solid var(--border2)", color: "var(--text-mid)", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
+        Перенести
+      </button>
+    </div>
+  );
+}
+
+function CancelInput({ onCancel }) {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(todayIso);
+  return (
+    <div className="inline-form-row" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <input className="edit-inp inline-form-field" type="date" style={{ width: 118, padding: "4px 7px", fontSize: 12 }} value={date} onChange={e => setDate(e.target.value)} />
+      <button className="inline-form-btn" onClick={() => onCancel(date)} style={{ fontSize: 11, fontWeight: 600, background: "var(--surface)", border: "1px solid var(--border2)", color: "#dc2626", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
+        Отменено
+      </button>
+    </div>
+  );
+}
+
 // Long freeform notes (or accidental keyboard mashes) shouldn't blow up a
 // card — show a short preview with a toggle to read the rest.
 function ExpandableText({ text, maxChars = 60, style }) {
@@ -1905,12 +2042,119 @@ function NotesField({ value, onSave }) {
   );
 }
 
+function MonthSummaryModal({ students, onClose }) {
+  const [monthOffset, setMonthOffset] = useState(0);
+  const now = new Date();
+  const viewDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+  const year = viewDate.getFullYear(), month = viewDate.getMonth();
+  const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}`;
+
+  const rows = students
+    .filter(s => !s.archived)
+    .map(s => {
+      const lessons = (s.history || []).filter(h => h.type === "lesson" && h.date && h.date.startsWith(monthPrefix)).length;
+      const earned = lessons * (s.rate || 0) * (s.sessionDuration || 1);
+      return { s, lessons, earned, status: getPaymentStatus(s) };
+    })
+    .filter(r => r.lessons > 0 || r.s.active)
+    .sort((a, b) => b.earned - a.earned);
+  const totalLessons = rows.reduce((sum, r) => sum + r.lessons, 0);
+  const totalEarned = rows.reduce((sum, r) => sum + r.earned, 0);
+
+  // Reschedules/cancellations only exist for recurring lessons (see the
+  // popup gating) — aggregate across every student's history for this month.
+  const allHistory = students.flatMap(s => s.history || []);
+  const cancelledThisMonth = allHistory.filter(h => h.type === "cancelled" && h.date?.startsWith(monthPrefix)).length;
+  const rescheduledThisMonth = allHistory.filter(h => h.type === "rescheduled" && h.date?.startsWith(monthPrefix));
+  const rescheduledDone = rescheduledThisMonth.filter(h => h.resolution === "done").length;
+  const rescheduledCancelled = rescheduledThisMonth.filter(h => h.resolution === "cancelled").length;
+  const rescheduledPending = rescheduledThisMonth.length - rescheduledDone - rescheduledCancelled;
+  const totalAttempts = totalLessons + rescheduledThisMonth.length + cancelledThisMonth;
+  const cancelRate = totalAttempts > 0 ? Math.round((cancelledThisMonth / totalAttempts) * 100) : 0;
+  const conversionRate = rescheduledThisMonth.length > 0 ? Math.round((rescheduledDone / rescheduledThisMonth.length) * 100) : null;
+
+  return (
+    <Sheet onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+        <button className="iBtn" style={{ fontSize: 13 }} onClick={() => setMonthOffset(o => o - 1)}>‹</button>
+        <div style={{ fontSize: 15, fontWeight: 700, flex: 1, textAlign: "center" }}>Итоги за {MONTHS_FULL[month]} {year}</div>
+        <button className="iBtn" style={{ fontSize: 13 }} disabled={monthOffset >= 0} onClick={() => setMonthOffset(o => Math.min(0, o + 1))}>›</button>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "40vh", overflowY: "auto" }}>
+        {rows.map(({ s, lessons, earned, status }) => {
+          const sc = status && STATUS_COLORS[status];
+          return (
+            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 7, padding: "7px 10px" }}>
+              <span style={{ flex: 1, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
+              <span style={{ color: "var(--text-dim)", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{lessons} зан.</span>
+              <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", width: 84, textAlign: "right" }}>{earned.toLocaleString()} ₽</span>
+              {sc ? (
+                <span style={{ fontSize: 10, color: sc.text, background: sc.bg, border: `1px solid ${sc.border}`, borderRadius: 8, padding: "2px 7px", flexShrink: 0 }}>
+                  {status === "overdue" ? "должен" : status === "soon" ? "скоро" : "ок"}
+                </span>
+              ) : <span style={{ width: 46, flexShrink: 0 }} />}
+            </div>
+          );
+        })}
+        {rows.length === 0 && <div style={{ fontSize: 13, color: "var(--text-faint)", textAlign: "center", padding: "20px 0" }}>Пока пусто</div>}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 800, borderTop: "2px solid var(--border)", marginTop: 10, paddingTop: 10 }}>
+        <span style={{ flex: 1 }}>Итого</span>
+        <span style={{ color: "var(--text-dim)", fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 600 }}>{totalLessons} зан.</span>
+        <span style={{ fontFamily: "'JetBrains Mono', monospace", width: 84, textAlign: "right" }}>{totalEarned.toLocaleString()} ₽</span>
+        <span style={{ width: 46, flexShrink: 0 }} />
+      </div>
+
+      {/* Reschedules/cancellations — permanent (recurring) lessons only */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 6, fontSize: 13 }}>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span style={{ color: "var(--text-dim)" }}>Перенесено</span>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{rescheduledThisMonth.length}</span>
+        </div>
+        {rescheduledThisMonth.length > 0 && (
+          <div style={{ fontSize: 11, color: "var(--text-faint)", paddingLeft: 8 }}>
+            состоялось {rescheduledDone} · сорвалось {rescheduledCancelled} · в процессе {rescheduledPending}
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span style={{ color: "var(--text-dim)" }}>Отменено</span>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{cancelledThisMonth}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span style={{ color: "var(--text-dim)" }}>% отменённых от всех попыток</span>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{cancelRate}%</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span style={{ color: "var(--text-dim)" }}>Конверсия переносов</span>
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{conversionRate === null ? "—" : `${rescheduledDone} из ${rescheduledThisMonth.length} (${conversionRate}%)`}</span>
+        </div>
+      </div>
+
+      <button className="save-btn" style={{ width: "100%", marginTop: 14 }} onClick={onClose}>Готово</button>
+    </Sheet>
+  );
+}
+
 const Field = ({ label, children }) => (
   <div>
     <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>{label}</div>
     {children}
   </div>
 );
+
+// What a raw cell will actually turn into once parsed, shown live in the
+// mapping step so a bare Excel date serial etc. doesn't look alarming.
+function previewParsedValue(raw, field) {
+  if (raw === undefined || String(raw).trim() === "") return "—";
+  switch (field) {
+    case "startDate": case "endDate": return parseImportDate(raw) || String(raw);
+    case "rate": case "weeklyHours": { const n = parseImportNumber(raw); return n === null ? String(raw) : String(n); }
+    case "formatGrade": { const { workFormat, grade } = splitFormatGrade(raw); return [workFormat, grade && `${grade} класс`].filter(Boolean).join(" ") || String(raw); }
+    case "status": { const { active, archived } = parseImportStatus(raw); return archived ? "архив" : active ? "активен" : "перерыв"; }
+    case "studentContactCombo": case "parentContactCombo": { const { phone, telegram } = splitPhoneTelegram(raw); return [phone, telegram].filter(Boolean).join(" / ") || String(raw); }
+    default: return String(raw);
+  }
+}
 
 function buildStudentFromRow(row, mapping) {
   const out = { name: "", subject: "", grade: "", workFormat: "", rate: 3000, weeklyHours: 2, sessionDuration: 1, lessonsPaid: 0, paymentMode: "subscription", lessonsPerBundle: 4, studentPhone: "", studentTelegram: "", parentName: "", parentPhone: "", parentTelegram: "", notes: "", startDate: "", endDate: "", active: true, archived: false, colorIdx: null };
@@ -1934,12 +2178,34 @@ function buildStudentFromRow(row, mapping) {
   return out;
 }
 
-function ImportStudentsModal({ onClose, onImport }) {
+// Phone numbers get typed inconsistently (spaces, dashes, leading 8 vs +7) —
+// compare on digits only, and match on the last 10 (drops the country code
+// digit) so "89031234567" and "+79031234567" are recognized as the same.
+function normalizePhone(p) {
+  const digits = String(p || "").replace(/\D/g, "");
+  return digits.slice(-10);
+}
+function findExistingStudent(row, students) {
+  const phone = normalizePhone(row.studentPhone);
+  const tg = (row.studentTelegram || "").trim().toLowerCase();
+  const byContact = students.find(s =>
+    (phone && normalizePhone(s.studentPhone) === phone) ||
+    (tg && (s.studentTelegram || "").trim().toLowerCase() === tg)
+  );
+  if (byContact) return { student: byContact, strong: true };
+  const name = row.name.trim().toLowerCase();
+  const byName = students.find(s => s.name.trim().toLowerCase() === name);
+  if (byName) return { student: byName, strong: false };
+  return null;
+}
+
+function ImportStudentsModal({ students, onClose, onImport }) {
   const [step, setStep] = useState("upload"); // upload | map | preview
   const [matrix, setMatrix] = useState(null);
   const [headerRowIdx, setHeaderRowIdx] = useState(0);
   const [mapping, setMapping] = useState({});
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState(null); // Set of parsedStudents indices, null = "all"
 
   const handleFile = async (file) => {
     setError("");
@@ -2015,7 +2281,9 @@ function ImportStudentsModal({ onClose, onImport }) {
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{headers[i] || `Колонка ${i + 1}`}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dataRows[0]?.[i] || "—"}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {(mapping[i] || "ignore") === "ignore" ? (dataRows[0]?.[i] || "—") : previewParsedValue(dataRows[0]?.[i], mapping[i])}
+                  </div>
                 </div>
                 <select className="edit-inp" style={{ width: 190, flexShrink: 0 }} value={mapping[i] || "ignore"} onChange={e => setMapping(m => ({ ...m, [i]: e.target.value }))}>
                   {IMPORT_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
@@ -2025,29 +2293,76 @@ function ImportStudentsModal({ onClose, onImport }) {
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
             <button className="cancel-btn-sm" onClick={() => setStep("upload")}>Назад</button>
-            <button className="save-btn" style={{ flex: 1 }} onClick={() => setStep("preview")}>Далее — предпросмотр ({parsedStudents.length})</button>
+            <button className="save-btn" style={{ flex: 1 }} onClick={() => { setSelected(null); setStep("preview"); }}>Далее — предпросмотр ({parsedStudents.length})</button>
           </div>
         </div>
       )}
 
-      {step === "preview" && (
-        <div>
-          <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 10 }}>Будет добавлено учеников: {parsedStudents.length}</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "45vh", overflowY: "auto" }}>
-            {parsedStudents.map((s, i) => (
-              <div key={i} style={{ fontSize: 12, background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 7, padding: "6px 10px" }}>
-                <b>{s.name}</b> {s.workFormat} {s.grade && `${s.grade} кл.`} · {s.rate}₽/ч · {s.weeklyHours}ч/нед
-                {s.archived && <span style={{ color: "var(--text-faint)" }}> · архив</span>}
-              </div>
-            ))}
+      {step === "preview" && (() => {
+        const matches = parsedStudents.map(s => findExistingStudent(s, students));
+        const defaultOn = i => !matches[i]; // duplicates start unchecked
+        const isSelected = i => selected === null ? defaultOn(i) : selected.has(i);
+        const toggle = i => setSelected(prev => {
+          const cur = prev === null ? new Set(parsedStudents.map((_, j) => j).filter(defaultOn)) : new Set(prev);
+          cur.has(i) ? cur.delete(i) : cur.add(i);
+          return cur;
+        });
+        const selectedCount = parsedStudents.filter((_, i) => isSelected(i)).length;
+        const toImport = parsedStudents.filter((_, i) => isSelected(i));
+        const allOn = selectedCount === parsedStudents.length;
+        return (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "var(--text-dim)", flex: 1 }}>Выбрано: {selectedCount} из {parsedStudents.length}</div>
+              <button
+                className="iBtn"
+                style={{ fontSize: 11, width: "auto", padding: "3px 9px" }}
+                onClick={() => setSelected(allOn ? new Set() : new Set(parsedStudents.map((_, j) => j)))}
+              >
+                {allOn ? "Снять все" : "Выбрать все"}
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: "45vh", overflowY: "auto" }}>
+              {parsedStudents.map((s, i) => (
+                <label key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 7, padding: "6px 10px", cursor: "pointer", opacity: isSelected(i) ? 1 : 0.5 }}>
+                  <input type="checkbox" checked={isSelected(i)} onChange={() => toggle(i)} style={{ flexShrink: 0 }} />
+                  <span><b>{s.name}</b> {s.workFormat} {s.grade && `${s.grade} кл.`} · {s.rate}₽/ч · {s.weeklyHours}ч/нед
+                    {s.archived && <span style={{ color: "var(--text-faint)" }}> · архив</span>}
+                    {matches[i] && (
+                      <span style={{ color: matches[i].strong ? "#dc2626" : "#d97706", marginLeft: 4 }}>
+                        · {matches[i].strong ? "уже есть (по контакту)" : "похоже, уже есть (по имени)"}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+              <button className="cancel-btn-sm" onClick={() => setStep("map")}>Назад</button>
+              <button className="save-btn" style={{ flex: 1 }} disabled={!toImport.length} onClick={() => { onImport(toImport); onClose(); }}>Импортировать {toImport.length}</button>
+            </div>
           </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-            <button className="cancel-btn-sm" onClick={() => setStep("map")}>Назад</button>
-            <button className="save-btn" style={{ flex: 1 }} onClick={() => { onImport(parsedStudents); onClose(); }}>Импортировать {parsedStudents.length}</button>
-          </div>
-        </div>
-      )}
+        );
+      })()}
     </Sheet>
+  );
+}
+
+// Icon opens the contact (tel:/t.me), the value itself is plain selectable
+// text (not a button) so it can actually be copied, plus an explicit copy
+// button as a one-click fallback.
+function ContactChip({ icon, value, prefix, color, bg, border }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async e => {
+    e.stopPropagation();
+    try { await navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1200); } catch {}
+  };
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color, background: bg, border: `1px solid ${border}`, borderRadius: 8, padding: "3px 5px 3px 8px", fontFamily: "'Manrope', sans-serif" }}>
+      <button onClick={() => openContact(value)} title="Открыть" style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 12, lineHeight: 1, color: "inherit" }}>{icon}</button>
+      <span style={{ userSelect: "text", cursor: "text" }}>{prefix}{value}</span>
+      <button onClick={copy} title="Скопировать" style={{ background: "none", border: "none", padding: "0 2px", cursor: "pointer", fontSize: 11, color: "inherit", opacity: copied ? 1 : 0.55 }}>{copied ? "✓" : "⧉"}</button>
+    </span>
   );
 }
 
@@ -2057,6 +2372,7 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
   const [ef, setEf] = useState({});
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showMonthSummary, setShowMonthSummary] = useState(false);
   const [af, setAf] = useState({ name: "", subject: "", grade: "", workFormat: "", rate: "3000", weeklyHours: "2", sessionDuration: 1, lessonsPaid: "0", paymentMode: "subscription", lessonsPerBundle: "4", studentPhone: "", studentTelegram: "", parentName: "", parentPhone: "", parentTelegram: "", colorIdx: null, startDate: isoDate(new Date()) });
 
   const startEdit = (s) => {
@@ -2116,6 +2432,10 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
           </div>
         </div>
       )}
+      {monthlyStats && (
+        <button className="ghost-btn" style={{ width: "100%", marginBottom: 16 }} onClick={() => setShowMonthSummary(true)}>📊 Итоги месяца</button>
+      )}
+      {showMonthSummary && <MonthSummaryModal students={students} onClose={() => setShowMonthSummary(false)} />}
       {students.filter(s => !s.archived).map(s => {
         const c = getColor(s.id);
         const placed = getPlaced(s.id);
@@ -2207,9 +2527,16 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{s.rate.toLocaleString()} ₽</div>
                   <div style={{ fontSize: 10, color: "var(--text-faint)" }}>в час</div>
-                  <div style={{ fontSize: 9, color: "var(--text-dim)", marginTop: 2, fontFamily: "'JetBrains Mono', monospace" }} title={s.startDate ? `С ${formatDate(s.startDate)}: период до первой отметки «занятие прошло» — оценка по ${s.weeklyHours}ч/нед × ${s.rate}₽, дальше — по факту отмеченных занятий` : "Lifetime Value"}>
-                    {s.startDate ? "~" : ""}LTV {getStudentLTV(s).toLocaleString()} ₽
-                  </div>
+                  {(() => {
+                    const ltv = getStudentLTV(s);
+                    return ltv !== null ? (
+                      <div style={{ fontSize: 9, color: "var(--text-dim)", marginTop: 2, fontFamily: "'JetBrains Mono', monospace" }} title={s.startDate ? `С ${formatDate(s.startDate)}: период до первой отметки «занятие прошло» — оценка по ${s.weeklyHours}ч/нед × ${s.rate}₽, дальше — по факту отмеченных занятий` : "Lifetime Value"}>
+                        {s.startDate ? "~" : ""}LTV {ltv.toLocaleString()} ₽
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 9, color: "var(--text-faint)", marginTop: 2 }} title="Появится после первой отметки «занятие прошло»">LTV: нет отметок</div>
+                    );
+                  })()}
                   {s.startDate && <div style={{ fontSize: 9, color: "var(--text-faint)" }}>с {formatDate(s.startDate)}</div>}
                 </div>
                 <button className="iBtn" onClick={() => startEdit(s)}>✎</button>
@@ -2219,34 +2546,14 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
 
               {/* Contacts — separate line: student's phone/telegram, then parent's name + phone/telegram */}
               {(s.studentPhone || s.studentTelegram || s.parentName || s.parentPhone || s.parentTelegram) && (
-                <div style={{ paddingLeft: 54, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {s.studentPhone && (
-                    <button onClick={() => openContact(s.studentPhone)} title={`Позвонить ученику: ${s.studentPhone}`} className="inline-form-btn"
-                      style={{ fontSize: 11, color: "var(--text-mid)", background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
-                      🎓 📞 {s.studentPhone}
-                    </button>
-                  )}
-                  {s.studentTelegram && (
-                    <button onClick={() => openContact(s.studentTelegram)} title={`Написать ученику: ${s.studentTelegram}`} className="inline-form-btn"
-                      style={{ fontSize: 11, color: "var(--text-mid)", background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
-                      🎓 💬 {s.studentTelegram}
-                    </button>
-                  )}
+                <div style={{ paddingLeft: 54, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {s.studentPhone && <ContactChip icon="📞" value={s.studentPhone} prefix="🎓 " color="var(--text-mid)" bg="var(--surface2)" border="var(--border2)" />}
+                  {s.studentTelegram && <ContactChip icon="💬" value={s.studentTelegram} prefix="🎓 " color="var(--text-mid)" bg="var(--surface2)" border="var(--border2)" />}
                   {s.parentName && !s.parentPhone && !s.parentTelegram && (
                     <span style={{ fontSize: 11, color: "var(--text-faint)", padding: "3px 9px" }}>👪 {s.parentName}</span>
                   )}
-                  {s.parentPhone && (
-                    <button onClick={() => openContact(s.parentPhone)} title={`Позвонить родителю: ${s.parentPhone}`} className="inline-form-btn"
-                      style={{ fontSize: 11, color: "#2563eb", background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
-                      👪 📞 {s.parentName ? `${s.parentName}: ` : ""}{s.parentPhone}
-                    </button>
-                  )}
-                  {s.parentTelegram && (
-                    <button onClick={() => openContact(s.parentTelegram)} title={`Написать родителю: ${s.parentTelegram}`} className="inline-form-btn"
-                      style={{ fontSize: 11, color: "#2563eb", background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 8, padding: "3px 9px", cursor: "pointer", fontFamily: "'Manrope', sans-serif" }}>
-                      👪 💬 {!s.parentPhone && s.parentName ? `${s.parentName}: ` : ""}{s.parentTelegram}
-                    </button>
-                  )}
+                  {s.parentPhone && <ContactChip icon="📞" value={s.parentPhone} prefix={`👪 ${s.parentName ? s.parentName + ": " : ""}`} color="#2563eb" bg="#eff6ff" border="#93c5fd" />}
+                  {s.parentTelegram && <ContactChip icon="💬" value={s.parentTelegram} prefix={`👪 ${!s.parentPhone && s.parentName ? s.parentName + ": " : ""}`} color="#2563eb" bg="#eff6ff" border="#93c5fd" />}
                 </div>
               )}
 
@@ -2335,19 +2642,28 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
               <div style={{ fontSize: 14, color: "var(--text-faint)", padding: "12px 0" }}>Пока нет записей</div>
             ) : (
               <div className="history-list">
-                {rows.map(ev => (
-                  <div key={ev.id} className="history-row">
-                    <span style={{ fontSize: 14, marginTop: 1 }}>{ev.type === "payment" ? "💰" : "✓"}</span>
-                    <span style={{ fontSize: 12, color: "var(--text-dim)", fontFamily: "'JetBrains Mono', monospace", width: 42, flexShrink: 0, marginTop: 2 }}>{formatDate(ev.date)}</span>
-                    <span style={{ fontSize: 14, color: "var(--text-mid)", flex: 1, minWidth: 0 }}>
-                      {ev.type === "payment" ? `Оплата: +${ev.amount} занятий` : "Занятие прошло (−1)"}
-                      {ev.type === "lesson" && ev.note && (
-                        <ExpandableText text={`«${ev.note}»`} maxChars={80} style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }} />
-                      )}
-                    </span>
-                    <button onClick={() => deleteHistoryEvent(s.id, ev.id)} title="Удалить запись и откатить баланс" className="iBtn del" style={{ fontSize: 13, flexShrink: 0 }}>✕</button>
-                  </div>
-                ))}
+                {rows.map(ev => {
+                  const icon = { payment: "💰", lesson: "✓", rescheduled: "↪", cancelled: "🚫" }[ev.type] || "•";
+                  const resolutionLabel = { done: "состоялось", cancelled: "сорвалось", rescheduled_again: "перенесено ещё раз" }[ev.resolution] || "ожидает";
+                  const label =
+                    ev.type === "payment" ? `Оплата: +${ev.amount} занятий` :
+                    ev.type === "lesson" ? "Занятие прошло (−1)" :
+                    ev.type === "cancelled" ? "Занятие отменено" :
+                    `Перенесено на ${formatDate(ev.newDate)} · ${resolutionLabel}`;
+                  return (
+                    <div key={ev.id} className="history-row">
+                      <span style={{ fontSize: 14, marginTop: 1 }}>{icon}</span>
+                      <span style={{ fontSize: 12, color: "var(--text-dim)", fontFamily: "'JetBrains Mono', monospace", width: 42, flexShrink: 0, marginTop: 2 }}>{formatDate(ev.date)}</span>
+                      <span style={{ fontSize: 14, color: "var(--text-mid)", flex: 1, minWidth: 0 }}>
+                        {label}
+                        {ev.type === "lesson" && ev.note && (
+                          <ExpandableText text={`«${ev.note}»`} maxChars={80} style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }} />
+                        )}
+                      </span>
+                      <button onClick={() => deleteHistoryEvent(s.id, ev.id)} title="Удалить запись и откатить баланс" className="iBtn del" style={{ fontSize: 13, flexShrink: 0 }}>✕</button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </Sheet>
@@ -2459,7 +2775,7 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
           <button className="ghost-btn" style={{ flex: 1 }} onClick={() => setShowImport(true)}>⇪ Загрузить из таблицы</button>
         </div>
       )}
-      {showImport && <ImportStudentsModal onClose={() => setShowImport(false)} onImport={importStudents} />}
+      {showImport && <ImportStudentsModal students={students} onClose={() => setShowImport(false)} onImport={importStudents} />}
 
       {/* Archive section */}
       {students.filter(s => s.archived).length > 0 && (
@@ -2475,7 +2791,7 @@ function StudentsTab({ students, getColor, getTarget, getPlaced, toggleActive, d
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{s.name} <span style={{ fontSize: 11, color: "var(--text-dim)", fontWeight: 400 }}>{s.subject}</span></div>
                   <div style={{ fontSize: 11, color: "var(--text-faint)", fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
-                    {lessonsDone} занятий · {s.startDate ? "~" : ""}LTV {ltv.toLocaleString()} ₽
+                    {lessonsDone} занятий{ltv !== null && <> · {s.startDate ? "~" : ""}LTV {ltv.toLocaleString()} ₽</>}
                     {s.startDate && ` · ${formatDate(s.startDate)}–${s.endDate ? formatDate(s.endDate) : "?"}`}
                   </div>
                 </div>
